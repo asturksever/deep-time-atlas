@@ -1,0 +1,771 @@
+<title>Deep Time Globe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: the globe is the app. It fills the screen; a place card (age + story) floats top-left, a time dock floats at the bottom, view buttons sit top-right. Floating panels are dark translucent material over space. One dark look on purpose. */
+:root {
+  color-scheme: dark;
+  --space: #03050b;                       /* behind the planet */
+  --glass: rgba(16, 22, 38, 0.62);        /* structural panels */
+  --glass-solid: #121a2c;
+  --glass-edge: rgba(255, 255, 255, 0.09);
+  --glass-hi: rgba(255, 255, 255, 0.07);  /* pressed / hovered fill */
+  --ink: #eef2fb;
+  --ink-dim: #9aa6c2;
+  --ink-faint: #6b7794;
+  --pin: #ff6f61;                         /* the exhibit's red marker */
+  --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-press: 140ms;
+  --dur-small: 180ms;
+  --dur-medium: 240ms;
+  --gutter: 16px;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--space); color: var(--ink); font: 14px/1.45 var(--ui); overflow: hidden; -webkit-font-smoothing: antialiased; }
+#stage { position: fixed; inset: 0; touch-action: none; cursor: grab; }
+#stage.grabbing { cursor: grabbing; }
+#stage canvas { display: block; width: 100%; height: 100%; }
+
+/* floating material */
+.glass { background: var(--glass); -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid var(--glass-edge); border-radius: 18px; box-shadow: 0 18px 50px -20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06); }
+@media (prefers-reduced-transparency: reduce) { .glass { background: var(--glass-solid); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+
+button { font: 600 13px var(--ui); color: var(--ink); background: transparent; border: 0; border-radius: 999px; cursor: pointer; padding: 8px 12px;
+  transition: transform var(--dur-press) var(--ease-out), background-color var(--dur-small) ease, opacity var(--dur-small) ease; -webkit-tap-highlight-color: transparent; }
+button:active { transform: scale(0.96); }
+@media (hover: hover) and (pointer: fine) { button:hover { background: var(--glass-hi); } }
+:focus-visible { outline: 2px solid var(--pin); outline-offset: 2px; }
+
+/* ---------- place card ---------- */
+.card { position: fixed; top: calc(var(--gutter) + env(safe-area-inset-top, 0px)); left: var(--gutter); width: min(300px, calc(100vw - 2 * var(--gutter) - 56px)); box-sizing: border-box; padding: 10px 12px 8px 14px; display: grid; gap: 2px; z-index: 3; }
+.card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.age { display: flex; align-items: baseline; gap: 6px; font-family: var(--display); white-space: nowrap; }
+.age b { font-size: clamp(1.7rem, 3.4vw, 2.1rem); font-weight: 800; letter-spacing: -0.04em; line-height: 1; font-variant-numeric: tabular-nums; }
+.age span { font: 500 11.5px var(--ui); color: var(--ink-dim); }
+.period { display: flex; align-items: center; gap: 6px; font: 600 10.5px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); white-space: nowrap; }
+.period b { width: 8px; height: 8px; border-radius: 50%; display: inline-block; transition: background-color var(--dur-medium) ease; }
+#storyBody h2 { font: 600 14.5px/1.3 var(--display); letter-spacing: -0.005em; margin: 4px 0 1px; text-wrap: balance; }
+#storyBody p { margin: 0; color: var(--ink-dim); font-size: 13px; line-height: 1.45; }
+.card:not(.open) #storyBody p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.more { justify-self: start; padding: 2px 0; font-weight: 500; font-size: 12px; color: var(--ink-dim); }
+@media (hover: hover) and (pointer: fine) { .more:hover { background: none; color: var(--ink); } }
+@media (max-width: 640px) { .card { width: auto; right: calc(var(--gutter) + 52px); } }
+
+/* ---------- view tools (top right) ---------- */
+.tools { position: fixed; top: calc(var(--gutter) + env(safe-area-inset-top, 0px)); right: var(--gutter); display: grid; padding: 4px; gap: 2px; border-radius: 14px; z-index: 3; }
+.tools button { width: 40px; height: 40px; padding: 0; display: grid; place-items: center; border-radius: 10px; }
+.tools svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tools button[aria-pressed="true"] { color: var(--pin); }
+
+/* ---------- following pill ---------- */
+.follow { position: fixed; left: 50%; top: calc(var(--gutter) + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 14px; font-weight: 600; font-size: 13px;
+  transition: opacity var(--dur-small) var(--ease-out), transform var(--dur-small) var(--ease-out); }
+.follow[hidden] { display: flex !important; opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.97); pointer-events: none; }
+.follow button { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; }
+@media (max-width: 640px) { .follow { top: auto; bottom: calc(118px + env(safe-area-inset-bottom, 0px)); } }
+
+/* ---------- time dock: one slim row, ruler in the middle ---------- */
+.dock { position: fixed; left: 50%; bottom: calc(var(--gutter) + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: min(1040px, calc(100vw - 2 * var(--gutter))); box-sizing: border-box; padding: 5px 6px; z-index: 3;
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; grid-template-areas: "play reset ruler speed cities"; align-items: center; gap: 4px; border-radius: 16px; }
+.ruler { grid-area: ruler; position: relative; height: 40px; user-select: none; -webkit-user-select: none; touch-action: none; cursor: pointer; border-radius: 10px; min-width: 0; }
+.ruler canvas { display: block; width: 100%; height: 100%; }
+#play { grid-area: play; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 80px; height: 36px; background: var(--ink); color: #0b1020; }
+@media (hover: hover) and (pointer: fine) { #play:hover { background: #ffffff; } }
+#play svg { width: 10px; height: 10px; fill: currentColor; }
+#reset { grid-area: reset; width: 36px; height: 36px; padding: 0; display: grid; place-items: center; color: var(--ink-dim); }
+#reset svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.speed { grid-area: speed; display: flex; align-items: center; gap: 6px; color: var(--ink-dim); padding: 0 4px; }
+.speed output { font: 500 11px var(--mono); min-width: 7.5ch; font-variant-numeric: tabular-nums; }
+input[type="range"] { accent-color: var(--pin); width: 64px; }
+.dock .anchor { grid-area: cities; }
+#citiesBtn { height: 36px; }
+@media (max-width: 760px) {
+  .dock { grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-areas: "ruler ruler ruler ruler" "play reset speed cities"; padding: 4px 6px 6px; row-gap: 2px; }
+  .speed { justify-self: start; }
+}
+/* ---------- cities popover, anchored to its button ---------- */
+.anchor { position: relative; }
+.pop { position: absolute; right: 0; bottom: calc(100% + 10px); width: 260px; padding: 6px; transform-origin: bottom right; z-index: 4; background: rgba(18, 26, 44, 0.94);
+  transition: opacity var(--dur-small) var(--ease-out), transform var(--dur-small) var(--ease-out); }
+.pop[hidden] { display: block !important; opacity: 0; transform: scale(0.96) translateY(4px); pointer-events: none; transition-duration: 120ms; }
+.pop { width: 290px; max-height: min(520px, calc(100vh - 230px)); overflow: auto; overscroll-behavior: contain; }
+.search { padding: 4px 4px 6px; position: relative; }
+.search input { width: 100%; box-sizing: border-box; font: 500 14px var(--ui); color: var(--ink); background: rgba(255,255,255,0.06); border: 1px solid var(--glass-edge); border-radius: 10px; padding: 9px 10px 9px 32px; outline: none;
+  transition: border-color var(--dur-small) ease, background-color var(--dur-small) ease; }
+.search input:focus { border-color: rgba(255,111,97,0.6); background: rgba(255,255,255,0.08); }
+.search input::placeholder { color: var(--ink-faint); }
+.search svg { position: absolute; left: 14px; top: 15px; width: 14px; height: 14px; fill: none; stroke: var(--ink-faint); stroke-width: 2; stroke-linecap: round; pointer-events: none; }
+.results { display: grid; gap: 1px; padding-top: 4px; }
+.results:empty { display: none; }
+.res { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; text-align: left; border-radius: 9px; padding: 8px 10px; font-weight: 500; }
+.res small { color: var(--ink-faint); font-size: 12px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.res[aria-selected="true"] { background: var(--glass-hi); }
+.note { font-size: 12.5px; color: var(--ink-dim); padding: 6px 10px 2px; line-height: 1.4; }
+.note:empty { display: none; }
+.city .rm { width: 30px; height: 30px; display: grid; place-items: center; color: var(--ink-faint); }
+.city.custom { grid-template-columns: 18px 1fr auto 30px 30px; }
+.pop .head { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); padding: 8px 10px 6px; }
+.city { display: grid; grid-template-columns: 18px 1fr auto 30px; align-items: center; gap: 8px; padding: 2px 2px 2px 10px; border-radius: 10px; }
+.city .tick { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--ink-faint); box-sizing: border-box; transition: background-color var(--dur-small) ease, border-color var(--dur-small) ease; }
+.city[aria-checked="true"] .tick { background: var(--pin); border-color: var(--pin); }
+.city .lat { font: 500 12px var(--mono); color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.city > button { padding: 0; }
+.city .nm { text-align: left; padding: 8px 0; font-weight: 500; grid-column: 1 / 3; display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: center; }
+.city .go { width: 30px; height: 30px; display: grid; place-items: center; color: var(--ink-dim); }
+.city .go svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+#citiesBtn .count { font: 600 11px var(--mono); background: var(--pin); color: #160805; border-radius: 999px; padding: 1px 6px; margin-left: 6px; }
+
+/* ---------- labels on the globe ---------- */
+#labels { position: fixed; inset: 0; pointer-events: none; z-index: 1; }
+.lbl { position: absolute; left: 0; top: 0; opacity: 0; pointer-events: auto; font: 600 12px var(--ui); color: var(--ink); padding: 3px 8px 3px 7px; border-radius: 999px;
+  background: rgba(8, 12, 24, 0.66); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: 1px solid var(--glass-edge); white-space: nowrap;
+  display: flex; align-items: center; gap: 6px; transition: opacity var(--dur-small) ease; cursor: pointer; will-change: transform; }
+.pole { position: absolute; left: 0; top: 0; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; display: grid; place-items: center; opacity: 0;
+  font: 600 10px var(--mono); color: var(--ink); background: rgba(8, 12, 24, 0.55); border: 1px solid rgba(238, 242, 251, 0.35); transition: opacity var(--dur-small) ease; will-change: transform; }
+.lbl i { width: 7px; height: 7px; border-radius: 50%; background: var(--pin); box-shadow: 0 0 0 2px rgba(255,111,97,0.25); }
+.lbl small { font: 500 11px var(--mono); color: var(--ink-dim); }
+
+/* ---------- about sheet ---------- */
+dialog { border: 0; padding: 0; background: transparent; color: var(--ink); max-width: min(560px, calc(100vw - 2 * var(--gutter))); width: 100%; }
+dialog::backdrop { background: rgba(2, 4, 10, 0.5); }
+dialog[open] .sheet { animation: rise var(--dur-medium) var(--ease-out); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(0.98); } }
+.sheet { padding: 20px 22px 18px; display: grid; gap: 10px; max-height: 80vh; overflow: auto; }
+.sheet h2 { margin: 0; font: 800 22px/1.15 var(--display); letter-spacing: -0.02em; }
+.sheet h3 { margin: 6px 0 0; font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); }
+.sheet p { margin: 0; color: var(--ink-dim); font-size: 13.5px; line-height: 1.55; }
+.sheet a { color: var(--ink); }
+.sheet .close { justify-self: end; background: var(--glass-hi); padding: 8px 16px; }
+
+/* ---------- loading: a veil the size of the planet, breathing slowly, with a status line under it ---------- */
+.placeholder { position: fixed; inset: 0; pointer-events: none; z-index: 2; --r: 120px; transition: opacity 420ms var(--ease-out); }
+.placeholder.done { opacity: 0; }
+.orb { position: absolute; left: 50%; top: var(--cy, 50%); width: calc(var(--r) * 2); height: calc(var(--r) * 2); margin: calc(var(--r) * -1) 0 0 calc(var(--r) * -1); border-radius: 50%;
+  background: radial-gradient(circle at 36% 30%, rgb(46, 64, 108), rgb(22, 33, 62) 48%, rgb(9, 14, 30) 78%);
+  box-shadow: inset 0 0 0 1px rgba(238, 242, 251, 0.08), 0 0 60px -10px rgba(90, 140, 255, 0.18);
+ }
+.orb::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 36% 30%, rgba(150, 178, 235, 0.22), rgba(150, 178, 235, 0) 62%);
+  animation: breathe 1.8s ease-in-out infinite alternate; }
+@keyframes breathe { from { opacity: 0.25; } to { opacity: 1; } }
+.placeholder.failed .orb::after { animation: none; opacity: 0.4; }
+.status { position: absolute; left: 50%; top: var(--cy, 50%); transform: translate(-50%, -50%); font-size: 13px; font-weight: 500; color: var(--ink); letter-spacing: 0.01em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .orb::after { animation: none; opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) { .pop, .follow, .lbl { transition-property: opacity; } dialog[open] .sheet { animation: none; } }
+</style>
+
+<div id="stage" aria-label="3D globe of reconstructed continents. Drag to turn it, scroll or pinch to zoom."></div>
+<div id="labels" aria-hidden="true"></div>
+
+<section class="card glass" id="card" aria-live="polite">
+  <div class="card-top">
+    <div class="age"><b id="ageNum">600</b><span>million years ago</span></div>
+    <div class="period"><b id="periodDot"></b><span id="periodName">Ediacaran</span></div>
+  </div>
+  <div id="storyBody"><h2 id="storyTitle"></h2><p id="storyText"></p></div>
+  <button class="more" id="more" type="button" aria-expanded="false">More</button>
+</section>
+
+<nav class="tools glass" aria-label="View">
+  <button id="home" type="button" title="Recentre the globe" aria-label="Recentre the globe"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+  <button id="spinBtn" type="button" aria-pressed="false" title="Slowly turn the globe" aria-label="Slowly turn the globe"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg></button>
+  <button id="about" type="button" title="Sources and limits" aria-label="Sources and limits"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg></button>
+</nav>
+
+<div class="follow glass" id="follow" hidden><span id="followName">Following London</span><button id="unfollow" type="button" aria-label="Stop following"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+
+<section class="dock glass" aria-label="Time controls">
+  <button id="play" type="button" aria-pressed="false"><svg viewBox="0 0 10 10" aria-hidden="true"><path id="playIcon" d="M1 0 L10 5 L1 10 Z"/></svg><span id="playLabel">Play</span></button>
+  <button id="reset" type="button" aria-label="Back to 600 million years ago" title="Back to 600 Ma"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5v14"/><path d="M19 6l-9 6 9 6z"/></svg></button>
+  <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Time, million years ago" aria-valuemin="0" aria-valuemax="600" aria-valuenow="600"><canvas id="rulerCanvas"></canvas></div>
+  <label class="speed" for="speed" title="Playback speed"><input id="speed" type="range" min="5" max="60" value="20" step="1" aria-label="Playback speed"><output id="speedOut" for="speed">20 Myr/s</output></label>
+    <div class="anchor">
+      <button id="citiesBtn" type="button" aria-expanded="false" aria-controls="pop">Cities<span class="count" id="cityCount">5</span></button>
+      <div class="pop glass" id="pop" hidden role="group" aria-label="Cities">
+        <div class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input id="q" type="search" placeholder="Search any city" autocomplete="off" spellcheck="false" aria-label="Search for a city to add" aria-controls="results"><div class="results" id="results" role="listbox" aria-label="Matching cities"></div><div class="note" id="note" aria-live="polite"></div></div>
+        <div class="head">Your cities</div>
+        <div id="cityList"></div>
+      </div>
+    </div>
+</section>
+
+<dialog id="sheet" aria-labelledby="sheetTitle">
+  <div class="sheet glass">
+    <h2 id="sheetTitle">Sources and limits</h2>
+    <p>Each piece of continental crust from an open plate model is draped with today's satellite imagery, then turned on the globe by its own plate's rotation for the age you pick. Between the pieces is ocean floor that has since been destroyed.</p>
+    <h3>What the surface shows</h3>
+    <p>The colours are today's surface carried back in time. Ice, deserts, forests and coastlines are modern, so an icy Antarctica sitting near the equator 500 million years ago is a reminder of that, not a claim about the past. Ancient shorelines, seas and mountains are not modelled.</p>
+    <h3>Poles</h3>
+    <p>N and S mark Earth's spin axis. The model keeps the axis fixed and moves the plates across it, which is how palaeomagnetism records ancient latitude.</p>
+    <h3>Uncertainty</h3>
+    <p>Before about 250 Ma, palaeomagnetism constrains latitude only, so east-west positions are the model's best fit. Pacific absolute positions between 250 and 83 Ma are adjusted in the model.</p>
+    <h3>Sources</h3>
+    <p>Plate model: Merdith, A.S. et al. (2021), <em>A continuous, kinematic full-plate motion model from 1 Ga to present</em>, Earth-Science Reviews 214, 103477, with coastline and static-polygon shapes from the same model (CC BY 4.0, via the EarthByte group's GPlates Web Service repository). Rotations computed with pyGPlates and replayed in your browser as quaternions, interpolated between 5 Myr steps. Imagery: NASA Earth Observatory, Blue Marble Next Generation with topography and bathymetry, July 2004 (Reto Stöckli). Geologic time scale and period colours: International Commission on Stratigraphy, ICS chart 2023/09. City search: GeoNames (CC BY 4.0), places of 15,000 people or more. Rendering: three.js.</p>
+    <form method="dialog"><button class="close" type="submit">Done</button></form>
+  </div>
+</dialog>
+
+<div class="placeholder" id="loading" role="status"><div class="orb" aria-hidden="true"></div><span class="status" id="loadingText">Loading the planet</span></div>
+
+<script id="model" type="application/json">__MODEL__</script>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const M = JSON.parse(document.getElementById('model').textContent);
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = { ink: css('--ink'), dim: css('--ink-dim'), pin: css('--pin'), mono: css('--mono') };
+const D = Math.PI / 180;
+const toVec = (lon, lat) => { const cl = Math.cos(lat * D); return [cl * Math.cos(lon * D), cl * Math.sin(lon * D), Math.sin(lat * D)]; };
+
+// ---------- rotations: one unit quaternion per plate per 5 Myr, slerped in between ----------
+const STEP = M.times[1] - M.times[0], NT = M.times.length;
+const pidIndex = new Map(M.pids.map((p, i) => [p, i]));
+const Q = M.q.map(row => { const a = new Float64Array(row.length); for (let i = 0; i < row.length; i += 4) {
+  const w = row[i] / 1e7, x = row[i+1] / 1e7, y = row[i+2] / 1e7, z = row[i+3] / 1e7, n = Math.hypot(w, x, y, z) || 1;
+  a[i] = w / n; a[i+1] = x / n; a[i+2] = y / n; a[i+3] = z / n; } return a; });
+function quat(pi, t) {
+  t = Math.max(0, Math.min(600, t));
+  const row = Q[pi], f = Math.min(t / STEP, NT - 1 - 1e-9), i = Math.floor(f), u = f - i, a = i * 4, b = a + 4;
+  let w2 = row[b], x2 = row[b+1], y2 = row[b+2], z2 = row[b+3];
+  let dot = row[a]*w2 + row[a+1]*x2 + row[a+2]*y2 + row[a+3]*z2;
+  if (dot < 0) { w2 = -w2; x2 = -x2; y2 = -y2; z2 = -z2; dot = -dot; }
+  let s0, s1;
+  if (dot > 0.9995) { s0 = 1 - u; s1 = u; } else { const th = Math.acos(dot), st = Math.sin(th); s0 = Math.sin((1-u)*th)/st; s1 = Math.sin(u*th)/st; }
+  return [s0*row[a]+s1*w2, s0*row[a+1]+s1*x2, s0*row[a+2]+s1*y2, s0*row[a+3]+s1*z2];
+}
+
+// ---------- geologic time and story ----------
+const PERIODS = [
+  ['Ediacaran', 635, 538.8, '#FED96A'], ['Cambrian', 538.8, 485.4, '#7FA056'], ['Ordovician', 485.4, 443.8, '#009270'],
+  ['Silurian', 443.8, 419.2, '#B3E1B6'], ['Devonian', 419.2, 358.9, '#CB8C37'], ['Carboniferous', 358.9, 298.9, '#67A599'],
+  ['Permian', 298.9, 251.902, '#F04028'], ['Triassic', 251.902, 201.4, '#812B92'], ['Jurassic', 201.4, 145, '#34B2C9'],
+  ['Cretaceous', 145, 66, '#7FC64E'], ['Paleogene', 66, 23.03, '#FD9A52'], ['Neogene', 23.03, 2.58, '#FFE619'], ['Quaternary', 2.58, 0, '#F9F97F']];
+const TICKS = [600, 560, 540, 500, 470, 450, 430, 400, 370, 340, 300, 280, 260, 240, 220, 200, 170, 150, 120, 105, 90, 65, 50, 35, 20, 0];
+const STORY = [
+  [600, 'Rodinia has broken apart', 'Most continental crust sits in the southern hemisphere. The pieces that will form Gondwana are converging while Laurentia, ancestral North America, drifts on its own.'],
+  [560, 'Gondwana comes together', 'The Pan-African mountain belts close the oceans between Africa, South America, India, Antarctica and Australia, stitching them into one supercontinent near the South Pole.'],
+  [540, 'The Cambrian begins', 'Gondwana is assembled. Laurentia, Baltica and Siberia are separate continents scattered around the tropics, ringed by shallow seas where complex animal life is diversifying fast.'],
+  [500, 'Iapetus is wide open', 'The Iapetus Ocean separates Laurentia from Baltica and Gondwana. What is now England sits on the Gondwanan margin far to the south.'],
+  [470, 'Avalonia breaks away', 'A sliver called Avalonia, carrying southern Britain and Newfoundland, rifts off Gondwana and starts north across the closing Iapetus.'],
+  [430, 'The Caledonian collisions', 'Baltica and Avalonia collide with Laurentia. The suture builds the Caledonides of Scotland and Norway and the northern Appalachians.'],
+  [400, 'Laurussia', 'The merged northern continent, Laurussia, lies astride the equator. Fish are diversifying and the first forests are not far off.'],
+  [340, 'Pangaea assembling', 'Gondwana closes on Laurussia, shutting the Rheic Ocean and raising the Variscan and Appalachian mountain belts.'],
+  [300, 'Coal forests', 'Equatorial Pangaea is covered in swampy forests whose remains become the coal of Europe and North America, while ice sheets cover southern Gondwana.'],
+  [260, 'Pangaea at its fullest', 'Almost all continental crust is joined in a single C-shaped landmass around the Tethys Ocean, with Panthalassa covering the rest of the planet.'],
+  [240, 'After the Great Dying', 'The end-Permian extinction has just wiped out most marine species. Pangaea is still whole, and the Tethys begins to close behind drifting Cimmerian blocks.'],
+  [200, 'The Atlantic is born', 'Rifting between North America and Africa opens the Central Atlantic, accompanied by vast volcanic outpourings at the end of the Triassic.'],
+  [170, 'Gondwana starts to split', 'East Gondwana, India, Antarctica and Australia, begins pulling away from Africa and South America.'],
+  [150, 'Late Jurassic seas', 'Shallow seas flood the continental interiors. Dinosaurs dominate the land, and the Atlantic keeps widening.'],
+  [120, 'The South Atlantic unzips', 'South America separates from Africa from south to north, and India breaks away from Antarctica and Australia.'],
+  [90, 'India sprints north', 'India and Madagascar part company, and India begins one of the fastest plate journeys on record toward Asia.'],
+  [65, 'The end of the dinosaurs', 'An asteroid impact in Mexico ends the Cretaceous. India is crossing the equator, passing over the hotspot that erupts the Deccan Traps.'],
+  [50, 'India meets Asia', 'The collision that will raise the Himalaya and the Tibetan Plateau begins. Australia starts to separate from Antarctica.'],
+  [35, 'Antarctica isolated', 'Openings south of Australia and South America let a current circle Antarctica, and permanent ice sheets begin to grow.'],
+  [20, 'A familiar world', 'The Atlantic is near its modern width. Arabia is colliding with Eurasia and closing the last of the Tethys.'],
+  [0, 'Today', 'The Atlantic is still widening by a few centimetres a year, Africa presses into Europe, and Australia is heading north toward Asia.']];
+
+// ---------- meshing: each present-day polygon becomes a small spherical mesh, textured by today's imagery ----------
+const R_CRUST = 1.004, R_LAND = 1.0048, MAX_EDGE = 2 * D;   // land floats a hair above crust so the two never flicker
+function prepRing(f) {
+  const n = f.r.length / 2, pts = [];
+  for (let i = 0; i < n; i++) {
+    let lon = f.r[2*i] / 100; const lat = f.r[2*i+1] / 100;
+    if (i) { const p = pts[i-1][0]; while (lon - p > 180) lon -= 360; while (lon - p < -180) lon += 360; }
+    pts.push([lon, lat]);
+  }
+  // a ring whose longitudes wind a full turn encloses a pole: close it along that pole
+  let back = pts[0][0] - pts[n-1][0]; while (back > 180) back -= 360; while (back < -180) back += 360;
+  const sweep = pts[n-1][0] + back - pts[0][0];
+  if (Math.abs(sweep) > 300) {
+    const pole = pts.reduce((s, p) => s + p[1], 0) < 0 ? -90 : 90, end = pts[0][0] + sweep;
+    pts.push([end, pts[0][1]], [end, pole], [pts[0][0], pole]);
+  }
+  return pts;
+}
+function ringToMesh(f) {
+  const pts = prepRing(f);
+  // densify edges so long chords follow the sphere
+  const ring = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length]; ring.push(a);
+    const steps = Math.floor(Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])) / 2);
+    for (let s = 1; s <= steps; s++) { const u = s / (steps + 1); ring.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]); }
+  }
+  // interior points (earcut treats one-point holes as Steiner points) keep triangles small
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [x, y] of ring) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  const holes = [], G = 4;
+  for (let y = Math.ceil(y0 / G) * G + G / 2; y < y1; y += G) {
+    const gx = G / Math.max(0.2, Math.cos(y * D));
+    for (let x = Math.ceil(x0 / gx) * gx + gx / 2; x < x1; x += gx) if (inside(ring, x, y)) holes.push([new THREE.Vector2(x, y)]);
+  }
+  const contour = ring.map(([x, y]) => new THREE.Vector2(x, y));
+  const tris = THREE.ShapeUtils.triangulateShape(contour, holes);
+  const verts = contour.concat(holes.map(h => h[0])).map(p => [p.x, p.y]);
+  // split long triangles: a long straight edge sags under the sphere and lets the ocean show through
+  const out = [], mids = new Map();
+  const ang = (a, b) => { const p = toVec(a[0], a[1]), q = toVec(b[0], b[1]); return Math.acos(Math.max(-1, Math.min(1, p[0]*q[0] + p[1]*q[1] + p[2]*q[2]))); };
+  const mid = (i, j) => { const k = i < j ? i + ',' + j : j + ',' + i; let m = mids.get(k);
+    if (m === undefined) { m = verts.length; verts.push([(verts[i][0] + verts[j][0]) / 2, (verts[i][1] + verts[j][1]) / 2]); mids.set(k, m); } return m; };
+  const sub = (a, b, c, depth) => {
+    const ab = ang(verts[a], verts[b]), bc = ang(verts[b], verts[c]), ca = ang(verts[c], verts[a]), mx = Math.max(ab, bc, ca);
+    if (mx <= MAX_EDGE || depth > 12) { out.push(a, b, c); return; }
+    if (mx === ab) { const m = mid(a, b); sub(a, m, c, depth + 1); sub(m, b, c, depth + 1); }
+    else if (mx === bc) { const m = mid(b, c); sub(a, b, m, depth + 1); sub(a, m, c, depth + 1); }
+    else { const m = mid(c, a); sub(a, b, m, depth + 1); sub(m, b, c, depth + 1); }
+  };
+  for (const t of tris) sub(t[0], t[1], t[2], 0);
+  const R = f.k === 'l' ? R_LAND : R_CRUST;
+  const pos = new Float32Array(verts.length * 3), uv = new Float32Array(verts.length * 2);
+  verts.forEach((p, i) => { const v = toVec(p[0], p[1]);
+    pos[3*i] = v[0] * R; pos[3*i+1] = v[1] * R; pos[3*i+2] = v[2] * R;
+    uv[2*i] = (p[0] + 180) / 360; uv[2*i+1] = (p[1] + 90) / 180; });
+  return { pos, uv, idx: Uint32Array.from(out) };
+}
+function inside(ring, x, y) { let c = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; }
+function merge(parts) {
+  let nv = 0, ni = 0; for (const p of parts) { nv += p.pos.length / 3; ni += p.idx.length; }
+  const pos = new Float32Array(nv * 3), uv = new Float32Array(nv * 2), idx = new Uint32Array(ni);
+  let ov = 0, oi = 0; for (const p of parts) { pos.set(p.pos, ov * 3); uv.set(p.uv, ov * 2); for (let k = 0; k < p.idx.length; k++) idx[oi + k] = p.idx[k] + ov; ov += p.pos.length / 3; oi += p.idx.length; }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const nrm = new Float32Array(pos.length); for (let i = 0; i < pos.length; i += 3) { const l = Math.hypot(pos[i], pos[i+1], pos[i+2]); nrm[i] = pos[i]/l; nrm[i+1] = pos[i+1]/l; nrm[i+2] = pos[i+2]/l; }
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  return g;
+}
+
+// ---------- scene ----------
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.3;
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x03050b);
+const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 200);
+scene.add(camera);
+const sun = new THREE.DirectionalLight(0xfff4e6, 2.6); sun.position.set(-3.5, 2.2, 3); camera.add(sun);   // lit from the viewer's upper left, wherever you turn
+scene.add(new THREE.AmbientLight(0x9fb4ff, 0.55));
+scene.add(new THREE.HemisphereLight(0xbcd2ff, 0x0a0f1e, 0.25));
+
+const earth = new THREE.Group(); earth.rotation.x = -Math.PI / 2; scene.add(earth);   // model is z-up, three.js is y-up
+const m2w = v => new THREE.Vector3(v[0], v[2], -v[1]);
+
+const oceanMat = new THREE.MeshStandardMaterial({ color: 0x0b1f4a, roughness: 0.62, metalness: 0.0 });
+earth.add(new THREE.Mesh(new THREE.SphereGeometry(1, 160, 80), oceanMat));
+
+// atmosphere: a back-face glow plus a faint front haze, both brighter at the limb
+const atmoVS = `varying vec3 vN; varying vec3 vV; void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`;
+const glow = new THREE.Mesh(new THREE.SphereGeometry(1.075, 96, 48), new THREE.ShaderMaterial({ vertexShader: atmoVS,
+  fragmentShader: `varying vec3 vN; varying vec3 vV; void main(){ float f = pow(clamp(0.78 + dot(vN, vV), 0.0, 1.0), 4.0); gl_FragColor = vec4(vec3(0.34,0.58,1.0) * f * 1.6, f); }`,
+  side: THREE.BackSide, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+scene.add(glow);
+const haze = new THREE.Mesh(new THREE.SphereGeometry(1.012, 96, 48), new THREE.ShaderMaterial({ vertexShader: atmoVS,
+  fragmentShader: `varying vec3 vN; varying vec3 vV; void main(){ float f = pow(1.0 - clamp(dot(vN, vV), 0.0, 1.0), 3.2); gl_FragColor = vec4(vec3(0.45,0.68,1.0) * f * 0.9, f * 0.85); }`,
+  transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+scene.add(haze);
+
+// stars, fixed in space
+(() => { const n = 2600, p = new Float32Array(n * 3), c = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { const u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2, r = Math.sqrt(1 - u * u);
+    p[3*i] = 80 * r * Math.cos(th); p[3*i+1] = 80 * u; p[3*i+2] = 80 * r * Math.sin(th);
+    const b = 0.25 + Math.pow(Math.random(), 3) * 0.75, warm = Math.random() < 0.2; c[3*i] = b; c[3*i+1] = b * (warm ? 0.9 : 0.96); c[3*i+2] = b * (warm ? 0.8 : 1.05); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ size: 1.4, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false }))); })();
+
+// equator, faint: it gives every latitude a reference
+(() => { const pts = []; for (let i = 0; i <= 256; i++) { const a = i / 256 * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * 1.006, Math.sin(a) * 1.006, 0)); }
+  earth.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, depthWrite: false }))); })();
+
+// poles: a short axis stub and a small ring at each end of the spin axis, with an N / S tag
+const poleTags = [];
+for (const s of [1, -1]) {
+  earth.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, s * 1.0), new THREE.Vector3(0, 0, s * 1.13)]),
+    new THREE.LineBasicMaterial({ color: 0xeef2fb, transparent: true, opacity: 0.7 })));
+  const ring = []; for (let i = 0; i <= 64; i++) { const a = i / 64 * Math.PI * 2; ring.push(new THREE.Vector3(Math.cos(a) * 0.035, Math.sin(a) * 0.035, s * 1.0062)); }
+  earth.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ring), new THREE.LineBasicMaterial({ color: 0xeef2fb, transparent: true, opacity: 0.55 })));
+  const el = document.createElement('div'); el.className = 'pole'; el.textContent = s > 0 ? 'N' : 'S'; document.getElementById('labels').appendChild(el);
+  poleTags.push({ el, tip: new THREE.Vector3(0, s * 1.17, 0) });   // world space: the model's z axis is world y
+}
+
+// ---------- controls: drag to turn, pinch or scroll to zoom, with inertia ----------
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.075; controls.enablePan = false;
+controls.minDistance = 1.35; controls.maxDistance = 7; controls.zoomSpeed = 0.8;
+let lastUserCam = -1e9;
+controls.addEventListener('start', () => { lastUserCam = performance.now(); stage.classList.add('grabbing'); setFollow(null); fly = null; setAutoSpin(false); });
+controls.addEventListener('end', () => { lastUserCam = performance.now(); stage.classList.remove('grabbing'); });
+
+// ---------- state ----------
+let t = 600, playing = false, speed = 20, lastT = -1;
+let follow = null, fly = null, autoSpin = false;
+
+// ---------- springs, flicks and rubber-banding for the ruler (as in the Atlas) ----------
+function stepSpring(s, dt) {
+  const k = Math.pow(2 * Math.PI / s.response, 2), c = 4 * Math.PI * s.damping / s.response;
+  const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n;
+  for (let i = 0; i < n; i++) { const a = -k * (s.x - s.target) - c * s.v; s.v += a * h; s.x += s.v * h; }
+  if (Math.abs(s.x - s.target) < 0.01 && Math.abs(s.v) < 0.04) { s.x = s.target; s.v = 0; s.active = false; }
+}
+const project = (v, d = 0.998) => (v / 1000) * d / (1 - d);
+const rubberband = (over, dim, c = 0.55) => (over * dim * c) / (dim + c * Math.abs(over));
+function velocity(hist) { if (hist.length < 2) return 0; const last = hist[hist.length - 1]; let first = hist[0];
+  for (let i = hist.length - 1; i >= 0; i--) { if (last[0] - hist[i][0] > 100) break; first = hist[i]; }
+  const dt = (last[0] - first[0]) / 1000; return dt > 0.008 ? (last[1] - first[1]) / dt : 0; }
+const ageS = { x: t, v: 0, target: t, response: 0.35, damping: 1, active: false };
+
+// ---------- ruler ----------
+const ruler = document.getElementById('ruler'), rc = document.getElementById('rulerCanvas'), rctx = rc.getContext('2d');
+const PAD = 16;
+const xOf = (ma, w) => PAD + (600 - ma) / 600 * (w - 2 * PAD), maOf = (x, w) => 600 - (x - PAD) / (w - 2 * PAD) * 600;
+let pressed = false, rdpr = 1;
+function sizeRuler() { rdpr = Math.min(devicePixelRatio || 1, 2); const r = ruler.getBoundingClientRect(); rc.width = Math.round(r.width * rdpr); rc.height = Math.round(r.height * rdpr); drawRuler(); }
+function drawRuler() {
+  const w = rc.width / rdpr, h = rc.height / rdpr, ctx = rctx; ctx.setTransform(rdpr, 0, 0, rdpr, 0, 0); ctx.clearRect(0, 0, w, h);
+  for (const [, a, b, col] of PERIODS) { const x0 = xOf(Math.min(a, 600), w), x1 = xOf(b, w); ctx.fillStyle = col; ctx.globalAlpha = 0.8; ctx.fillRect(x0, h - 8, Math.max(0, x1 - x0 - 1), 5); }
+  ctx.globalAlpha = 1; ctx.strokeStyle = 'rgba(238,242,251,0.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(xOf(600, w), 25); ctx.lineTo(xOf(0, w), 25); ctx.stroke();
+  const narrow = w < 560; ctx.font = `600 ${narrow ? 9 : 10.5}px ${C.mono}`; ctx.textAlign = 'center';
+  let last = -1e9;
+  for (const m of TICKS) { const x = xOf(m, w); ctx.beginPath(); ctx.moveTo(x, 21); ctx.lineTo(x, 29); ctx.stroke();
+    const lab = String(m), tw = ctx.measureText(lab).width;
+    if (x - tw / 2 > last + 4) { ctx.fillStyle = Math.abs(m - t) < 0.5 ? C.pin : C.dim; ctx.fillText(lab, x, 14); last = x + tw / 2; } }
+  const cx = xOf(Math.max(-20, Math.min(620, t)), w), k = pressed ? 1.25 : 1;
+  if (pressed) { ctx.beginPath(); ctx.arc(cx, 26, 13, 0, 7); ctx.fillStyle = 'rgba(255,111,97,0.18)'; ctx.fill(); }
+  ctx.fillStyle = C.pin; ctx.fillRect(cx - 1, 18, 2, 15);
+  ctx.beginPath(); ctx.moveTo(cx - 6 * k, 28 + 6 * k); ctx.lineTo(cx + 6 * k, 28 + 6 * k); ctx.lineTo(cx, 28); ctx.fill();
+}
+const nearestTick = (ma, max) => { let best = null, d = Infinity; for (const k of TICKS) { const dd = Math.abs(k - ma); if (dd < d) { d = dd; best = k; } } return d <= max ? best : null; };
+function springTo(target, v, response, damping) {
+  ageS.x = t; ageS.v = v; ageS.target = target; ageS.response = response; ageS.damping = damping; ageS.active = true;
+  if (reduceMotion.matches) { t = target; ageS.active = false; }
+}
+let drag = null;
+ruler.addEventListener('pointerdown', e => {
+  if (drag || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  ruler.setPointerCapture(e.pointerId); stop();
+  const r = ruler.getBoundingClientRect(), x = e.clientX - r.left, cur = xOf(t, r.width), on = Math.abs(x - cur) <= 14;
+  drag = { id: e.pointerId, downX: x, offset: on ? x - cur : 0, hist: [[e.timeStamp, t]], moved: false }; pressed = true;
+  if (on) { ageS.active = false; return; }
+  const target = Math.max(0, Math.min(600, maOf(x, r.width)));
+  springTo(nearestTick(target, 6 * 600 / (r.width - 2 * PAD)) ?? target, ageS.active ? ageS.v : 0, 0.3, 1);
+});
+ruler.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const r = ruler.getBoundingClientRect(), x = e.clientX - r.left - drag.offset;
+  if (!drag.moved && Math.abs(x + drag.offset - drag.downX) < 4) return;
+  drag.moved = true; ageS.active = false;
+  const raw = maOf(x, r.width); t = raw > 600 ? 600 + rubberband(raw - 600, 80) : raw < 0 ? rubberband(raw, 80) : raw;
+  drag.hist.push([e.timeStamp, raw]); if (drag.hist.length > 12) drag.hist.shift();
+});
+function endDrag(e) {
+  if (!drag || e.pointerId !== drag.id) return; pressed = false;
+  if (!drag.moved) { drag = null; return; }
+  const w = ruler.getBoundingClientRect().width, v = velocity(drag.hist); drag = null;
+  const flick = Math.abs(v) > 120, rest = Math.max(0, Math.min(600, t + (flick ? project(v) : 0)));
+  const target = (flick ? nearestTick(rest, Infinity) : nearestTick(rest, 6 * 600 / (w - 2 * PAD))) ?? rest;
+  springTo(target, flick ? v : 0, 0.4, flick ? 0.85 : 1);
+}
+ruler.addEventListener('pointerup', endDrag); ruler.addEventListener('pointercancel', endDrag);
+ruler.addEventListener('keydown', e => { let nt;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') nt = TICKS.find(k => k < t - 0.01) ?? 0;
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') nt = TICKS.slice().reverse().find(k => k > t + 0.01) ?? 600;
+  else if (e.key === 'Home') nt = 600; else if (e.key === 'End') nt = 0; else return;
+  e.preventDefault(); stop(); ageS.active = false; t = nt; });
+
+// ---------- playback ----------
+const playBtn = document.getElementById('play'), playIcon = document.getElementById('playIcon'), playLabel = document.getElementById('playLabel');
+function start() { if (t <= 0.01) t = 600; ageS.active = false; playing = true; playLabel.textContent = 'Pause'; playIcon.setAttribute('d', 'M1 0 H4 V10 H1 Z M6 0 H9 V10 H6 Z'); playBtn.setAttribute('aria-pressed', 'true'); }
+function stop() { if (!playing) return; playing = false; playLabel.textContent = 'Play'; playIcon.setAttribute('d', 'M1 0 L10 5 L1 10 Z'); playBtn.setAttribute('aria-pressed', 'false'); }
+playBtn.addEventListener('click', () => { if (playing) stop(); else start(); });
+document.getElementById('reset').addEventListener('click', () => { stop(); springTo(600, 0, 0.7, 1); });
+const speedIn = document.getElementById('speed'), speedOut = document.getElementById('speedOut');
+speedIn.addEventListener('input', () => { speed = +speedIn.value; speedOut.textContent = `${speed} Myr/s`; });
+
+// ---------- card ----------
+const card = document.getElementById('card'), more = document.getElementById('more');
+more.addEventListener('click', () => { const o = card.classList.toggle('open'); more.textContent = o ? 'Less' : 'More'; more.setAttribute('aria-expanded', o); });
+let curStory = null;
+function updateText() {
+  const tt = Math.max(0, Math.min(600, t));
+  document.getElementById('ageNum').textContent = tt < 0.5 ? '0' : String(Math.round(tt));
+  const per = PERIODS.find(p => tt <= p[1] && tt >= p[2]) || PERIODS[0];
+  document.getElementById('periodName').textContent = per[0];
+  document.getElementById('periodDot').style.background = per[3];
+  const pick = STORY.reduce((b, x) => (x[0] >= tt - 0.5 && (b === null || x[0] < b[0])) ? x : b, null) || STORY[0];
+  if (pick !== curStory) { const first = !curStory; curStory = pick;
+    document.getElementById('storyTitle').textContent = pick[1]; document.getElementById('storyText').textContent = pick[2];
+    const body = document.getElementById('storyBody');
+    if (!first && body.animate) body.animate(reduceMotion.matches ? [{ opacity: 0.3 }, { opacity: 1 }]
+      : [{ opacity: 0.2, filter: 'blur(2px)', transform: 'translateY(3px)' }, { opacity: 1, filter: 'blur(0)', transform: 'none' }], { duration: 220, easing: 'cubic-bezier(0.23,1,0.32,1)' }); }
+  ruler.setAttribute('aria-valuenow', Math.round(tt)); ruler.setAttribute('aria-valuetext', `${Math.round(tt)} million years ago, ${per[0]}`);
+}
+
+// ---------- cities ----------
+const DEFAULT_ON = ['London', 'New York', 'Sydney', 'Tokyo', 'Istanbul'];
+const STORE = 'deep-time-globe.cities';
+const pinGeo = new THREE.SphereGeometry(0.007, 16, 8), pinMat = new THREE.MeshBasicMaterial({ color: 0xff6f61 });
+const labels = document.getElementById('labels');
+const cities = [], sel = new Set();
+const esc = x => String(x).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+function addCity(d) {   // d: { id, n, sub, ll: [lon, lat], p, custom }
+  if (cities.some(c => c.id === d.id)) return cities.find(c => c.id === d.id);
+  const c = { ...d, pi: pidIndex.get(d.p), v: toVec(d.ll[0], d.ll[1]), today: d.ll[1] };
+  c.mesh = new THREE.Mesh(pinGeo, pinMat); earth.add(c.mesh);
+  c.lbl = document.createElement('div'); c.lbl.className = 'lbl'; c.lbl.innerHTML = `<i></i>${esc(c.n)}<small></small>`;
+  c.lbl.addEventListener('click', () => setFollow(c.id)); labels.appendChild(c.lbl);
+  cities.push(c); return c;
+}
+function removeCity(c) { earth.remove(c.mesh); c.lbl.remove(); sel.delete(c.id); cities.splice(cities.indexOf(c), 1); if (follow === c.id) setFollow(null); }
+const fmtLat = l => `${Math.abs(l).toFixed(0)}°${l >= 0 ? 'N' : 'S'}`;
+function cityModel(c) { const q = quat(c.pi, t); return new THREE.Vector3(...c.v).applyQuaternion(new THREE.Quaternion(q[1], q[2], q[3], q[0])); }
+const list = document.getElementById('cityList');
+const GO = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>';
+const RM = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+function renderList() {
+  list.innerHTML = cities.map((c, i) => `<div class="city${c.custom ? ' custom' : ''}" data-i="${i}" aria-checked="${sel.has(c.id)}"><button class="nm" type="button" role="switch" aria-checked="${sel.has(c.id)}" title="${esc(c.sub || c.n)}"><span class="tick"></span>${esc(c.n)}</button><span class="lat" data-lat></span><button class="go" type="button" aria-label="Follow ${esc(c.n)}" title="Follow ${esc(c.n)}">${GO}</button>${c.custom ? `<button class="rm" type="button" aria-label="Remove ${esc(c.n)}" title="Remove">${RM}</button>` : ''}</div>`).join('');
+  list.querySelectorAll('.city').forEach(row => { const c = cities[+row.dataset.i];
+    row.querySelector('.nm').addEventListener('click', () => toggleCity(c, !sel.has(c.id)));
+    row.querySelector('.go').addEventListener('click', () => { toggleCity(c, true); setFollow(c.id); closePop(); });
+    row.querySelector('.rm')?.addEventListener('click', () => { removeCity(c); renderList(); save(); }); });
+  const n = document.getElementById('cityCount'); n.textContent = sel.size; n.hidden = !sel.size;
+}
+function toggleCity(c, on) { on ? sel.add(c.id) : sel.delete(c.id);
+  const row = list.querySelector(`.city[data-i="${cities.indexOf(c)}"]`);
+  if (row) { row.setAttribute('aria-checked', on); row.querySelector('.nm').setAttribute('aria-checked', on); }
+  const n = document.getElementById('cityCount'); n.textContent = sel.size; n.hidden = !sel.size;
+  if (!on && follow === c.id) setFollow(null); save(); }
+function save() { try { localStorage.setItem(STORE, JSON.stringify({ custom: cities.filter(c => c.custom).map(({ id, n, sub, ll, p }) => ({ id, n, sub, ll, p })), on: [...sel] })); } catch (_) {} }
+for (const c of M.cities) addCity({ id: c.n, n: c.n, ll: c.ll, p: c.p, custom: false });
+(() => { let st = null; try { st = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (_) {}
+  if (st && Array.isArray(st.custom)) for (const d of st.custom) if (pidIndex.has(d.p)) addCity({ ...d, custom: true });
+  const on = st && Array.isArray(st.on) ? st.on : DEFAULT_ON; for (const id of on) if (cities.some(c => c.id === id)) sel.add(id); })();
+renderList();
+
+// which plate carries a present-day point: the smallest static polygon containing it, else the nearest coastline piece
+let rings = null;
+function plateFor(lon, lat) {
+  if (!rings) rings = M.f.filter(f => f.e <= 0.5 && pidIndex.has(f.p)).map(f => { const pts = prepRing(f); let a = 0;
+    for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a += p[0] * q[1] - q[0] * p[1]; }
+    return { k: f.k, p: f.p, pts, area: Math.abs(a) / 2 }; });
+  const hit = kind => { let best = null; for (const r of rings) { if (r.k !== kind || (best && r.area >= best.area)) continue;
+    if (inside(r.pts, lon, lat) || inside(r.pts, lon + 360, lat) || inside(r.pts, lon - 360, lat)) best = r; } return best; };
+  const h = hit('c') || hit('l'); if (h) return h.p;
+  let best = null, bd = 1.5;   // within about 150 km of a coastline piece
+  for (const r of rings) for (const [x, y] of r.pts) { const dx = ((x - lon + 540) % 360 - 180) * Math.cos(lat * D), dd = Math.hypot(dx, y - lat); if (dd < bd) { bd = dd; best = r; } }
+  return best ? best.p : null;
+}
+
+// search: a bundled GeoNames list (the page cannot call outside services), fetched the first time someone searches
+const qIn = document.getElementById('q'), resEl = document.getElementById('results'), noteEl = document.getElementById('note');
+let places = null, placesLoading = null, hits = [], active = 0;
+const norm = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+function loadPlaces() { return placesLoading ||= fetch('places.json').then(r => r.json()).then(d => {
+  places = d.r.map(r => ({ n: r[0], a: norm(r[1] || r[0]), nn: norm(r[0]), cc: r[2], country: d.c[r[2]] || r[2], lat: r[3] / 100, lon: r[4] / 100, pop: r[5] })); })
+  .catch(() => { placesLoading = null; noteEl.textContent = 'The city list did not load. Check your connection and try again.'; }); }
+qIn.addEventListener('focus', loadPlaces);
+qIn.addEventListener('input', async () => { noteEl.textContent = ''; const q = norm(qIn.value.trim());
+  if (!q) { hits = []; drawHits(); return; }
+  if (!places) { await loadPlaces(); if (!places || norm(qIn.value.trim()) !== q) return; }
+  const pre = [], word = [];
+  for (const p of places) { if (p.nn.startsWith(q) || p.a.startsWith(q)) pre.push(p); else if (pre.length < 6 && (p.nn.includes(' ' + q) || p.a.includes(' ' + q))) word.push(p); if (pre.length >= 6) break; }
+  hits = pre.concat(word).slice(0, 6); active = 0; drawHits();
+  if (!hits.length) noteEl.textContent = `No city called "${qIn.value.trim()}" in the list. It covers places of 15,000 people or more.`; });
+function drawHits() {
+  resEl.innerHTML = hits.map((p, i) => `<button class="res" type="button" role="option" aria-selected="${i === active}" data-i="${i}">${esc(p.n)}<small>${esc(p.country)}</small></button>`).join('');
+  resEl.querySelectorAll('.res').forEach(b => b.addEventListener('click', () => pick(hits[+b.dataset.i]))); }
+qIn.addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown' && hits.length) { active = (active + 1) % hits.length; drawHits(); e.preventDefault(); }
+  else if (e.key === 'ArrowUp' && hits.length) { active = (active - 1 + hits.length) % hits.length; drawHits(); e.preventDefault(); }
+  else if (e.key === 'Enter' && hits[active]) { pick(hits[active]); e.preventDefault(); } });
+function pick(p) {
+  const pid = plateFor(p.lon, p.lat);
+  if (pid === null) { noteEl.textContent = `${p.n} sits on ocean floor that this model does not carry back in time.`; return; }
+  const c = addCity({ id: `${p.n}|${p.cc}|${p.lat}|${p.lon}`, n: p.n, sub: `${p.n}, ${p.country}`, ll: [p.lon, p.lat], p: pid, custom: !M.cities.some(x => x.n === p.n) });
+  sel.add(c.id); renderList(); save();
+  qIn.value = ''; hits = []; drawHits(); noteEl.textContent = '';
+  setFollow(c.id); closePop();
+}
+
+const citiesBtn = document.getElementById('citiesBtn'), pop = document.getElementById('pop');
+function openPop() { pop.hidden = false; citiesBtn.setAttribute('aria-expanded', 'true'); }
+function closePop() { pop.hidden = true; citiesBtn.setAttribute('aria-expanded', 'false'); }
+citiesBtn.addEventListener('click', e => { e.stopPropagation(); pop.hidden ? openPop() : closePop(); });
+document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && !citiesBtn.contains(e.target)) closePop(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidden) { closePop(); citiesBtn.focus(); } });
+
+// ---------- camera: follow a city, recentre, slow spin ----------
+const followEl = document.getElementById('follow');
+function setFollow(id) { follow = id; followEl.hidden = !id; if (id) { const c = cities.find(x => x.id === id); document.getElementById('followName').textContent = `Following ${c ? c.n : ''}`; fly = null; } }
+document.getElementById('unfollow').addEventListener('click', () => setFollow(null));
+function lookAtModel(lon, lat) { return m2w(toVec(lon, lat)).normalize(); }
+document.getElementById('home').addEventListener('click', () => { setFollow(null); fly = { dir: homeDir(), dist: fitDist() }; });
+const spinBtn = document.getElementById('spinBtn');
+function setAutoSpin(on) { autoSpin = on; spinBtn.setAttribute('aria-pressed', on); }
+spinBtn.addEventListener('click', () => setAutoSpin(!autoSpin));
+// recentre on the centre of mass of the continents at the current age
+function homeDir() { const s = new THREE.Vector3();
+  for (const g of groups) if (g.mesh.visible && g.kind === 'c') s.add(g.centroid.clone().applyQuaternion(g.mesh.quaternion).multiplyScalar(g.weight));
+  if (s.lengthSq() < 1e-6) return lookAtModel(20, 0);
+  const w = new THREE.Vector3(s.x, s.y, s.z).normalize(); return m2w([w.x, w.y, w.z]).normalize(); }
+
+// ---------- sheet ----------
+const sheet = document.getElementById('sheet');
+document.getElementById('about').addEventListener('click', () => sheet.showModal());
+sheet.addEventListener('click', e => { if (e.target === sheet) sheet.close(); });
+
+// ---------- deep links: #ma240 opens at that age; otherwise every visit starts at 600 Ma ----------
+function readHash() { const m = (location.hash || '').match(/ma(\d{1,3}(?:\.\d+)?)/i); if (m) t = Math.max(0, Math.min(600, +m[1])); }
+addEventListener('hashchange', () => { stop(); ageS.active = false; readHash(); });
+
+// ---------- build plates, load imagery ----------
+const groups = [];
+const loadingEl = document.getElementById('loading'), loadingText = document.getElementById('loadingText');
+async function build(tex) {
+  const plateMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.88, metalness: 0, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.22 });
+  const byKey = new Map();
+  for (const f of M.f) { const pi = pidIndex.get(f.p); if (pi === undefined) continue;
+    const key = `${f.k}|${pi}|${f.b}|${f.e}`; if (!byKey.has(key)) byKey.set(key, { kind: f.k, pi, b: f.b, e: f.e, feats: [] }); byKey.get(key).feats.push(f); }
+  // crust first, coastlines above it, so small land pieces outside the static polygons still show
+  const keys = [...byKey.values()].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'c' ? -1 : 1));
+  let done = 0, lastYield = performance.now();
+  for (const g of keys) {
+    const parts = g.feats.map(ringToMesh).filter(p => p.idx.length);
+    if (parts.length) {
+      const geo = merge(parts), mesh = new THREE.Mesh(geo, plateMat); mesh.renderOrder = g.kind === 'c' ? 1 : 2;
+      geo.computeBoundingSphere();
+      const cen = new THREE.Vector3(); const pa = geo.attributes.position.array; for (let i = 0; i < pa.length; i += 3) cen.add(new THREE.Vector3(pa[i], pa[i+1], pa[i+2]));
+      earth.add(mesh); groups.push({ ...g, mesh, centroid: cen.normalize(), weight: pa.length / 3 });
+    }
+    if (++done % 40 === 0 && performance.now() - lastYield > 30) { loadingText.textContent = `Building plates ${Math.round(done / keys.length * 100)}%`; await new Promise(r => setTimeout(r)); lastYield = performance.now(); }
+  }
+}
+function oceanFromImagery(img) {
+  // match the open ocean to the imagery's own deep-water colour, so plate edges in deep water don't show a seam
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128; const x = c.getContext('2d'); x.drawImage(img, 0, 0, 256, 128);
+  const d = x.getImageData(0, 0, 256, 128).data, rs = [], gs = [], bs = [];
+  for (let lat = -30; lat <= 20; lat += 2) for (let lon = -175; lon <= -125; lon += 2) {
+    const i = (Math.round((90 - lat) / 180 * 127) * 256 + Math.round((lon + 180) / 360 * 255)) * 4; rs.push(d[i]); gs.push(d[i+1]); bs.push(d[i+2]); }
+  const med = a => a.sort((p, q) => p - q)[a.length >> 1];
+  oceanMat.color.setRGB(med(rs) / 255, med(gs) / 255, med(bs) / 255, THREE.SRGBColorSpace);
+  oceanMat.emissive.copy(oceanMat.color).multiplyScalar(0.22);
+}
+
+// ---------- frame loop ----------
+const clock = new THREE.Clock();
+const tmpQ = new THREE.Quaternion(), tmpV = new THREE.Vector3();
+let introT = 0, recheck = 0;
+// when time carries the continents out of view, bring them back, unless you have just steered the camera yourself
+function keepContinentsInView() {
+  if (!groups.length || performance.now() - lastUserCam < 4000 || drag) return;
+  const w = camera.position.clone().normalize(), cm = new THREE.Vector3(w.x, -w.z, w.y);   // camera direction in model space
+  let seen = 0, total = 0;
+  for (const g of groups) { if (!g.mesh.visible || g.kind !== 'c') continue; total += g.weight;
+    if (g.centroid.clone().applyQuaternion(g.mesh.quaternion).dot(cm) > 0.35) seen += g.weight; }
+  if (total && seen / total < 0.3) fly = { dir: homeDir(), dist: camera.position.length() };
+}
+// the free area is the screen minus the dock (and the card on phones, where it spans the top); the planet is centred in it
+const dockEl = document.querySelector('.dock');
+let free = { top: 0, bottom: innerHeight };
+function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h;
+  camera.fov = w / h < 0.8 ? 48 : 35;
+  const top = (w <= 640 ? card.getBoundingClientRect().bottom : 0) + 12, bottom = dockEl.getBoundingClientRect().top - 12;
+  free = { top, bottom };
+  camera.setViewOffset(w, h, 0, Math.round(h / 2 - (top + bottom) / 2), w, h);
+  camera.updateProjectionMatrix(); sizeRuler();
+  loadingEl.style.setProperty('--cy', `${((top + bottom) / 2).toFixed(1)}px`); }
+// camera distance at which the whole planet, atmosphere included, fits the free area with a little air
+function fitDist() {
+  const half = Math.min((free.bottom - free.top) / 2, innerWidth / 2 - 12) * 0.94, R = 1.08;
+  const k = half / (innerHeight / 2) * Math.tan(camera.fov * D / 2);
+  return Math.min(controls.maxDistance, Math.max(controls.minDistance, R * Math.sqrt(1 + 1 / (k * k))));
+}
+// keep the veil exactly over the planet while it loads (the camera is still flying in)
+let loaded = false;
+function sizeVeil() {
+  const d = camera.position.length(), r = 1.02 / Math.sqrt(Math.max(1e-3, d * d - 1.04));
+  loadingEl.style.setProperty('--r', `${(r / Math.tan(camera.fov * D / 2) * innerHeight / 2).toFixed(1)}px`);
+}
+function frame() {
+  const dt = Math.min(0.05, clock.getDelta());
+  if (playing) { t = Math.max(0, t - dt * speed); if (t <= 0) stop(); }
+  if (ageS.active) { stepSpring(ageS, dt); t = ageS.x; }
+  const tt = Math.max(0, Math.min(600, t));
+  if (tt !== lastT) {
+    for (const g of groups) { const vis = tt <= g.b + 1e-6 && tt >= g.e - 1e-6; g.mesh.visible = vis;
+      if (vis) { const q = quat(g.pi, tt); g.mesh.quaternion.set(q[1], q[2], q[3], q[0]); } }
+    lastT = tt; updateText();
+  }
+  drawRuler();
+  // camera behaviours, all frame-rate independent and critically damped
+  const dist = camera.position.length();
+  const ease = tau => 1 - Math.exp(-dt / tau);
+  if (follow && cities.some(x => x.id === follow)) { const c = cities.find(x => x.id === follow); const dir = m2w(cityModel(c).toArray()).normalize();
+    camera.position.lerp(dir.multiplyScalar(dist), ease(0.3)).setLength(dist); }
+  else if (fly) { camera.position.lerp(fly.dir.clone().multiplyScalar(dist), ease(0.28)); camera.position.setLength(dist + (fly.dist - dist) * ease(0.3));
+    if (camera.position.clone().normalize().distanceTo(fly.dir) < 0.002 && Math.abs(dist - fly.dist) < 0.01) fly = null; }
+  else if (autoSpin && !reduceMotion.matches) camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), dt * 0.12);
+  else if ((recheck -= dt) <= 0) { recheck = 0.5; keepContinentsInView(); }
+  if (introT < 1) { introT = Math.min(1, introT + dt / 1.6); }
+  // drag speed scales with zoom, so the surface tracks the finger near the ground
+  controls.rotateSpeed = Math.max(0.12, Math.min(1, (dist - 1) * 0.42));
+  controls.update();
+  // pins and labels
+  const camDir = camera.position.clone().normalize();
+  const placed = [];
+  for (const c of cities) { const on = sel.has(c.id);
+    const p = cityModel(c).multiplyScalar(1.007); c.mesh.position.copy(p); c.mesh.visible = on;
+    if (!on) { c.lbl.style.opacity = 0; c.lbl.style.pointerEvents = 'none'; continue; }
+    const w = m2w(p.toArray()), facing = w.clone().normalize().dot(camDir);
+    tmpV.copy(w).project(camera);
+    const x = (tmpV.x + 1) / 2 * innerWidth, y = (1 - tmpV.y) / 2 * innerHeight;
+    const vis = facing > 0.18;
+    c.lbl.style.opacity = vis ? 1 : 0; c.lbl.style.pointerEvents = vis ? 'auto' : 'none';
+    c.lbl.querySelector('small').textContent = fmtLat(Math.asin(Math.max(-1, Math.min(1, p.z / p.length()))) / D);
+    placed.push({ c, x: x + 9, y: y - 11, vis });
+  }
+  // labels that would collide step down until they clear the ones above them
+  placed.sort((a, b) => a.y - b.y);
+  const taken = [];
+  for (const l of placed) { const w = l.c.lbl.offsetWidth || 90;
+    if (l.vis) { let moved = true; while (moved) { moved = false; for (const o of taken) if (Math.abs(o.y - l.y) < 24 && l.x < o.x + o.w + 4 && o.x < l.x + w + 4) { l.y = o.y + 24; moved = true; } } taken.push({ x: l.x, y: l.y, w }); }
+    l.c.lbl.style.transform = `translate3d(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px, 0)`; }
+  for (const pt of poleTags) {
+    // hidden when the planet is between the camera and the tag
+    const d = pt.tip.clone().sub(camera.position), b = camera.position.dot(d), a = d.lengthSq(), cc = camera.position.lengthSq() - 1, disc = b * b - a * cc;
+    let hidden = false; if (disc > 0) { const s1 = (-b - Math.sqrt(disc)) / a; hidden = s1 > 0 && s1 < 1; }
+    tmpV.copy(pt.tip).project(camera);
+    pt.el.style.transform = `translate3d(${((tmpV.x + 1) / 2 * innerWidth).toFixed(1)}px, ${((1 - tmpV.y) / 2 * innerHeight).toFixed(1)}px, 0)`;
+    pt.el.style.opacity = hidden ? 0 : 1;
+  }
+  if (!pop.hidden) list.querySelectorAll('.city').forEach(row => { const c = cities[+row.dataset.i];
+    const p = cityModel(c); row.querySelector('[data-lat]').textContent = fmtLat(Math.asin(Math.max(-1, Math.min(1, p.z))) / D); });
+  if (!loaded) sizeVeil();
+  renderer.render(scene, camera);
+}
+
+readHash(); ageS.x = t;
+// open looking at the continents, from a little further out, then settle in
+addEventListener('resize', resize); resize();
+camera.position.set(0, 0.4, 6.5);
+updateText();
+renderer.setAnimationLoop(frame);
+new THREE.TextureLoader().load('earth-4k.jpg', async tex => {
+  tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  oceanFromImagery(tex.image);
+  await build(tex); lastT = -1;
+  frame();   // place plates for the current age before choosing where to look
+  const dir = homeDir(); camera.position.copy(dir.clone().multiplyScalar(fitDist() + 2.5));
+  fly = { dir, dist: fitDist() };
+  loadingEl.classList.add('done'); setTimeout(() => { loaded = true; }, 450);
+}, undefined, () => { loadingEl.classList.add('failed'); loadingText.textContent = 'The imagery did not load. Reload the page to try again.'; });
+</script>

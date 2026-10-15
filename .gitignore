@@ -1,0 +1,10 @@
+# downloaded sources (see README for where they come from)
+data/
+assets/src/
+# generated
+dist/
+build/*
+!build/model.json
+!build/places.json
+__pycache__/
+.DS_Store

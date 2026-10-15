@@ -1,0 +1,4 @@
+pygplates==1.0.0
+shapely>=2.0
+numpy
+playwright

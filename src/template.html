@@ -1,0 +1,567 @@
+<title>Deep Time Atlas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a single museum-screen panel. The ruler sits above the map like the exhibit's, a control bar lives inside the bezel, story and cities below. Deliberately one dark look, like a lit display case. */
+:root {
+  color-scheme: dark;
+  --case: #070b16;       /* room / page ground */
+  --screen: #0c1428;     /* bezel */
+  --ocean: #12308c;      /* deep ocean */
+  --ocean-edge: #1c45b8;
+  --shelf: #4f86e8;      /* continental crust under shallow sea */
+  --land: #7d8a5a;       /* present-day land outline, reconstructed */
+  --ink: #e8ecf8;
+  --ink-dim: #93a0c4;
+  --rule: #2a3760;
+  --control: #16214a;
+  --control-hi: #1d2b5e;
+  --pin: #ff6f61;        /* the red marker of the exhibit's ruler */
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* motion: one timing scale for the whole page */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-press: 140ms;
+  --dur-small: 180ms;
+  --dur-medium: 240ms;
+}
+html, body { height: 100%; }
+body { background: var(--case); color: var(--ink); font-family: var(--display); margin: 0; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 18px 28px; display: grid; gap: 14px; }
+
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 18px; }
+h1 { font-size: clamp(1.5rem, 3.6vw, 2.4rem); line-height: 1.05; font-weight: 800; letter-spacing: -0.025em; margin: 0; text-wrap: balance; }
+h1 span { color: var(--ink-dim); font-weight: 400; letter-spacing: -0.01em; }
+.age { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: clamp(1.1rem, 2.6vw, 1.6rem); white-space: nowrap; }
+.age small { color: var(--ink-dim); font-size: 0.62em; margin-left: 6px; letter-spacing: 0.02em; }
+
+.screen { background: var(--screen); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 10px 8px; display: grid; gap: 6px; box-shadow: 0 30px 80px -40px #000, inset 0 0 0 6px #050912; }
+.ruler { position: relative; height: 46px; user-select: none; -webkit-user-select: none; touch-action: none; cursor: pointer; }
+.ruler canvas, .map canvas { display: block; width: 100%; height: 100%; }
+.ruler:focus-visible { outline: 2px solid var(--pin); outline-offset: 2px; border-radius: 4px; }
+.map { position: relative; width: 100%; aspect-ratio: 2 / 1; max-width: 100%; }
+.map.globe { cursor: grab; touch-action: none; }
+.map.globe.dragging { cursor: grabbing; }
+
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 6px 4px 2px; }
+.bar-left { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-dim); padding: 0 4px; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -2px; margin-right: 6px; }
+
+/* Buttons: feedback on press, hover only where hover exists */
+button { font: 600 13px var(--display); color: var(--ink); background: var(--control); border: 1px solid var(--rule); border-radius: 999px; padding: 7px 14px; cursor: pointer;
+  transition: transform var(--dur-press) var(--ease-out), background-color var(--dur-small) ease, color var(--dur-small) ease, border-color var(--dur-small) ease;
+  -webkit-tap-highlight-color: transparent; }
+button:active { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) { button:hover { background: var(--control-hi); } }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--pin); outline-offset: 2px; }
+button[aria-pressed="true"] { background: var(--ink); color: var(--case); border-color: var(--ink); }
+#play { min-width: 96px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+#play svg { width: 11px; height: 11px; fill: currentColor; }
+.speed { font-size: 12px; color: var(--ink-dim); display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.speed output { font-family: var(--mono); min-width: 7ch; }
+input[type="range"] { accent-color: var(--pin); width: 110px; }
+
+/* Segmented control: the thumb slides, the labels stay put */
+.seg { position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; background: #070d1e; border: 1px solid var(--rule); border-radius: 999px; padding: 2px; }
+.seg button { position: relative; z-index: 1; background: transparent; border: 0; padding: 6px 14px; font-weight: 600; color: var(--ink-dim); }
+.seg button[aria-pressed="true"] { background: transparent; color: var(--case); }
+@media (hover: hover) and (pointer: fine) { .seg button:hover { background: transparent; color: var(--ink); } .seg button[aria-pressed="true"]:hover { color: var(--case); } }
+.seg .thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); border-radius: 999px; background: var(--ink); transition: transform var(--dur-medium) var(--ease-out); }
+.seg[data-mode="globe"] .thumb { transform: translateX(100%); }
+
+.below { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; }
+@media (max-width: 760px) { .below { grid-template-columns: minmax(0, 1fr); } }
+.story { min-width: 0; }
+.period { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); display: flex; align-items: center; gap: 8px; }
+.period b { display: inline-block; width: 10px; height: 10px; border-radius: 50%; transition: background-color var(--dur-medium) ease; }
+.story h2 { font-size: 1.35rem; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em; margin: 6px 0 4px; text-wrap: balance; }
+.story p { margin: 0; color: var(--ink-dim); line-height: 1.55; max-width: 62ch; font-size: 15px; }
+
+.panel { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.cities { display: flex; flex-wrap: wrap; gap: 6px; }
+.cities button { font-weight: 400; padding: 5px 11px; font-size: 12px; }
+.readout { font-family: var(--mono); font-size: 13px; color: var(--ink-dim); font-variant-numeric: tabular-nums; line-height: 1.6; min-height: 1.6em; }
+.readout strong { color: var(--ink); font-weight: 600; }
+.label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); }
+.hint { font-size: 12px; color: var(--ink-dim); }
+
+footer { font-size: 12px; color: var(--ink-dim); line-height: 1.55; border-top: 1px solid var(--rule); padding-top: 12px; display: grid; gap: 6px; }
+footer p { margin: 0; max-width: 120ch; }
+footer a { color: var(--ink); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Deep Time Atlas <span>600 million years of moving continents</span></h1>
+    <div class="age" aria-hidden="true"><span id="ageNum">600</span><small>million years ago</small></div>
+  </header>
+
+  <section class="screen" aria-label="Reconstruction display">
+    <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Time, million years ago" aria-valuemin="0" aria-valuemax="600" aria-valuenow="600"><canvas id="rulerCanvas"></canvas></div>
+    <div class="map" id="mapBox"><canvas id="mapCanvas" role="img" aria-label="Map of reconstructed continents"></canvas></div>
+    <div class="bar">
+      <div class="bar-left">
+        <button id="play" type="button" aria-pressed="false"><svg viewBox="0 0 10 10" aria-hidden="true"><path id="playIcon" d="M1 0 L10 5 L1 10 Z"/></svg><span id="playLabel">Play</span></button>
+        <button id="reset" type="button">Back to 600 Ma</button>
+        <label class="speed" for="speed">Speed
+          <input id="speed" type="range" min="5" max="60" value="20" step="1">
+          <output id="speedOut" for="speed">20 Myr/s</output>
+        </label>
+      </div>
+      <div class="seg" id="seg" data-mode="map" role="group" aria-label="Projection">
+        <span class="thumb" aria-hidden="true"></span>
+        <button type="button" data-mode="map" aria-pressed="true">Map</button>
+        <button type="button" data-mode="globe" aria-pressed="false">Globe</button>
+      </div>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--land)"></i>Land (today's coastlines, carried back in time)</span>
+      <span><i style="background:var(--shelf)"></i>Continental crust, incl. drowned shelves</span>
+      <span><i style="background:var(--ocean)"></i>Ocean</span>
+    </div>
+  </section>
+
+  <section class="below">
+    <div class="story" aria-live="polite">
+      <div class="period"><b id="periodDot"></b><span id="periodName">Ediacaran Period</span></div>
+      <div id="storyBody"><h2 id="storyTitle"></h2><p id="storyText"></p></div>
+    </div>
+    <div class="panel">
+      <div class="label">Track a modern city</div>
+      <div class="cities" id="cities"></div>
+      <div class="readout" id="readout"></div>
+      <div class="hint" id="hint">Drag or flick the ruler to travel in time. Arrow keys step between its marks.</div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Built entirely on open data. Plate model: Merdith, A.S. et al. (2021), <em>A continuous, kinematic full-plate motion model from 1 Ga to present</em>, Earth-Science Reviews 214, 103477, with coastline and static-polygon shapes from the same model (CC BY 4.0, via the EarthByte group's GPlates Web Service repository). Rotations computed with pyGPlates and replayed in your browser as quaternions, interpolated between 5 Myr steps. Geologic time scale and period colours: International Commission on Stratigraphy, ICS chart 2023/09.</p>
+    <p>Note: the museum display uses palaeogeographic maps with reconstructed ancient shorelines and mountains. This version shows where today's continental pieces were; ancient sea level is not modelled, and longitudes before about 250 Ma are poorly constrained because palaeomagnetism records latitude only. Pacific absolute positions between 250 and 83 Ma are adjusted in the model.</p>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script id="model" type="application/json">__MODEL__</script>
+<script>
+(function () {
+const M = JSON.parse(document.getElementById('model').textContent);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = { ocean: css('--ocean'), oceanEdge: css('--ocean-edge'), shelf: css('--shelf'), land: css('--land'),
+            ink: css('--ink'), dim: css('--ink-dim'), rule: css('--rule'), pin: css('--pin'), mono: css('--mono') };
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
+// ---------- Mollweide (raw projection, so only d3 core is needed) ----------
+function mollweideRaw(l, p) {
+  let t = p, k = Math.PI * Math.sin(p);
+  for (let i = 0; i < 30; i++) { const d = (t + Math.sin(t) - k) / (1 + Math.cos(t)); t -= d; if (Math.abs(d) < 1e-9) break; }
+  t /= 2;
+  return [2 * Math.SQRT2 / Math.PI * l * Math.cos(t), Math.SQRT2 * Math.sin(t)];
+}
+mollweideRaw.invert = (x, y) => {
+  const t = Math.asin(Math.max(-1, Math.min(1, y / Math.SQRT2)));
+  return [Math.PI * x / (2 * Math.SQRT2 * Math.cos(t)), Math.asin((2 * t + Math.sin(2 * t)) / Math.PI)];
+};
+
+// ---------- decode model ----------
+const times = M.times; const STEP = times[1] - times[0]; const NT = times.length;
+const pidIndex = new Map(M.pids.map((p, i) => [p, i]));
+const Q = M.q.map(row => { const a = new Float64Array(row.length); for (let i = 0; i < row.length; i += 4) {
+  let w = row[i] / 1e7, x = row[i+1] / 1e7, y = row[i+2] / 1e7, z = row[i+3] / 1e7; const n = Math.hypot(w, x, y, z) || 1;
+  a[i] = w / n; a[i+1] = x / n; a[i+2] = y / n; a[i+3] = z / n; } return a; });
+const D = Math.PI / 180;
+function toVec(lon, lat) { const cl = Math.cos(lat * D); return [cl * Math.cos(lon * D), cl * Math.sin(lon * D), Math.sin(lat * D)]; }
+
+const feats = M.f.map(f => {
+  const n = f.r.length / 2; let ring = [];
+  for (let i = 0; i < n; i++) ring.push([f.r[2*i] / 100, f.r[2*i+1] / 100]);
+  ring.push(ring[0]);
+  // d3 spherical polygons: exterior must enclose the smaller area
+  if (d3.geoArea({ type: 'Polygon', coordinates: [ring] }) > 2 * Math.PI) ring.reverse();
+  const v = new Float64Array(ring.length * 3);
+  ring.forEach((p, i) => { const q = toVec(p[0], p[1]); v[3*i] = q[0]; v[3*i+1] = q[1]; v[3*i+2] = q[2]; });
+  return { k: f.k, pi: pidIndex.get(f.p), b: f.b, e: f.e, v, n: ring.length, area: d3.geoArea({ type: 'Polygon', coordinates: [ring] }) };
+});
+// draw big pieces first so small islands sit on top
+feats.sort((a, b) => b.area - a.area);
+const crust = feats.filter(f => f.k === 'c'), land = feats.filter(f => f.k === 'l');
+
+// quaternion for plate index at time t (slerp between 5 Myr samples)
+const qcache = new Map(); let qcacheT = -1;
+function quat(pi, t) {
+  t = Math.max(0, Math.min(600, t));
+  if (t !== qcacheT) { qcache.clear(); qcacheT = t; }
+  let q = qcache.get(pi); if (q) return q;
+  const row = Q[pi]; const f = Math.min(t / STEP, NT - 1 - 1e-9); const i = Math.floor(f), u = f - i;
+  const a = i * 4, b = a + 4;
+  let w2 = row[b], x2 = row[b+1], y2 = row[b+2], z2 = row[b+3];
+  let dot = row[a]*w2 + row[a+1]*x2 + row[a+2]*y2 + row[a+3]*z2;
+  if (dot < 0) { w2 = -w2; x2 = -x2; y2 = -y2; z2 = -z2; dot = -dot; }
+  let s0, s1;
+  if (dot > 0.9995) { s0 = 1 - u; s1 = u; } else { const th = Math.acos(dot), st = Math.sin(th); s0 = Math.sin((1-u)*th)/st; s1 = Math.sin(u*th)/st; }
+  q = [s0*row[a]+s1*w2, s0*row[a+1]+s1*x2, s0*row[a+2]+s1*y2, s0*row[a+3]+s1*z2];
+  qcache.set(pi, q); return q;
+}
+function rotRing(f, q) {
+  const [w, x, y, z] = q, v = f.v, out = new Array(f.n);
+  for (let i = 0; i < f.n; i++) {
+    const vx = v[3*i], vy = v[3*i+1], vz = v[3*i+2];
+    // v' = v + 2u x (u x v + w v)
+    const cx = y*vz - z*vy + w*vx, cy = z*vx - x*vz + w*vy, cz = x*vy - y*vx + w*vz;
+    const rx = vx + 2*(y*cz - z*cy), ry = vy + 2*(z*cx - x*cz), rz = vz + 2*(x*cy - y*cx);
+    out[i] = [Math.atan2(ry, rx) / D, Math.asin(Math.max(-1, Math.min(1, rz))) / D];
+  }
+  return out;
+}
+const alive = (f, t) => t <= f.b + 1e-6 && t >= f.e - 1e-6;
+
+// ---------- geologic time ----------
+const PERIODS = [
+  ['Ediacaran', 635, 538.8, '#FED96A'], ['Cambrian', 538.8, 485.4, '#7FA056'], ['Ordovician', 485.4, 443.8, '#009270'],
+  ['Silurian', 443.8, 419.2, '#B3E1B6'], ['Devonian', 419.2, 358.9, '#CB8C37'], ['Carboniferous', 358.9, 298.9, '#67A599'],
+  ['Permian', 298.9, 251.902, '#F04028'], ['Triassic', 251.902, 201.4, '#812B92'], ['Jurassic', 201.4, 145, '#34B2C9'],
+  ['Cretaceous', 145, 66, '#7FC64E'], ['Paleogene', 66, 23.03, '#FD9A52'], ['Neogene', 23.03, 2.58, '#FFE619'], ['Quaternary', 2.58, 0, '#F9F97F']];
+// the exhibit's own ruler stops
+const TICKS = [600, 560, 540, 500, 470, 450, 430, 400, 370, 340, 300, 280, 260, 240, 220, 200, 170, 150, 120, 105, 90, 65, 50, 35, 20, 0];
+const STORY = [
+  [600, 'Rodinia has broken apart', 'Most continental crust sits in the southern hemisphere. The pieces that will form Gondwana are converging while Laurentia, ancestral North America, drifts on its own.'],
+  [560, 'Gondwana comes together', 'The Pan-African mountain belts close the oceans between Africa, South America, India, Antarctica and Australia, stitching them into one supercontinent near the South Pole.'],
+  [540, 'The Cambrian begins', 'Gondwana is assembled. Laurentia, Baltica and Siberia are separate continents scattered around the tropics, ringed by shallow seas where complex animal life is diversifying fast.'],
+  [500, 'Iapetus is wide open', 'The Iapetus Ocean separates Laurentia from Baltica and Gondwana. What is now England sits on the Gondwanan margin far to the south.'],
+  [470, 'Avalonia breaks away', 'A sliver called Avalonia, carrying southern Britain and Newfoundland, rifts off Gondwana and starts north across the closing Iapetus.'],
+  [430, 'The Caledonian collisions', 'Baltica and Avalonia collide with Laurentia. The suture builds the Caledonides of Scotland and Norway and the northern Appalachians.'],
+  [400, 'Laurussia', 'The merged northern continent, Laurussia, lies astride the equator. Fish are diversifying and the first forests are not far off.'],
+  [340, 'Pangaea assembling', 'Gondwana closes on Laurussia, shutting the Rheic Ocean and raising the Variscan and Appalachian mountain belts.'],
+  [300, 'Coal forests', 'Equatorial Pangaea is covered in swampy forests whose remains become the coal of Europe and North America, while ice sheets cover southern Gondwana.'],
+  [260, 'Pangaea at its fullest', 'Almost all continental crust is joined in a single C-shaped landmass around the Tethys Ocean, with Panthalassa covering the rest of the planet.'],
+  [240, 'After the Great Dying', 'The end-Permian extinction has just wiped out most marine species. Pangaea is still whole, and the Tethys begins to close behind drifting Cimmerian blocks.'],
+  [200, 'The Atlantic is born', 'Rifting between North America and Africa opens the Central Atlantic, accompanied by vast volcanic outpourings at the end of the Triassic.'],
+  [170, 'Gondwana starts to split', 'East Gondwana, India, Antarctica and Australia, begins pulling away from Africa and South America.'],
+  [150, 'Late Jurassic seas', 'Shallow seas flood the continental interiors. Dinosaurs dominate the land, and the Atlantic keeps widening.'],
+  [120, 'The South Atlantic unzips', 'South America separates from Africa from south to north, and India breaks away from Antarctica and Australia.'],
+  [90, 'India sprints north', 'India and Madagascar part company, and India begins one of the fastest plate journeys on record toward Asia.'],
+  [65, 'The end of the dinosaurs', 'An asteroid impact in Mexico ends the Cretaceous. India is crossing the equator, passing over the hotspot that erupts the Deccan Traps.'],
+  [50, 'India meets Asia', 'The collision that will raise the Himalaya and the Tibetan Plateau begins. Australia starts to separate from Antarctica.'],
+  [35, 'Antarctica isolated', 'Openings south of Australia and South America let a current circle Antarctica, and permanent ice sheets begin to grow.'],
+  [20, 'A familiar world', 'The Atlantic is near its modern width. Arabia is colliding with Eurasia and closing the last of the Tethys.'],
+  [0, 'Today', 'The Atlantic is still widening by a few centimetres a year, Africa presses into Europe, and Australia is heading north toward Asia.']];
+
+// ---------- motion primitives ----------
+// Springs in Apple's terms: response (s) and damping ratio. Unit mass.
+function stepSpring(s, dt) {
+  const k = Math.pow(2 * Math.PI / s.response, 2), c = 4 * Math.PI * s.damping / s.response;
+  const n = Math.max(1, Math.ceil(dt * 240)), h = dt / n;
+  for (let i = 0; i < n; i++) { const a = -k * (s.x - s.target) - c * s.v; s.v += a * h; s.x += s.v * h; }
+  if (Math.abs(s.x - s.target) < s.eps && Math.abs(s.v) < s.eps * 4) { s.x = s.target; s.v = 0; s.active = false; }
+}
+// where a flick would come to rest, like scroll deceleration
+const project = (v, d = 0.998) => (v / 1000) * d / (1 - d);
+// progressive resistance past an edge instead of a hard stop
+const rubberband = (over, dim, c = 0.55) => (over * dim * c) / (dim + c * Math.abs(over));
+// velocity from the last ~100 ms of samples [time ms, value]
+function velocity(hist) {
+  if (hist.length < 2) return 0;
+  const last = hist[hist.length - 1]; let first = hist[0];
+  for (let i = hist.length - 1; i >= 0; i--) { if (last[0] - hist[i][0] > 100) break; first = hist[i]; }
+  const dt = (last[0] - first[0]) / 1000; return dt > 0.008 ? (last[1] - first[1]) / dt : 0;
+}
+
+// ---------- state ----------
+let t = 600, playing = false, speed = 20, mode = 'map';
+const sel = new Set(['London']);
+const ageS = { x: 600, v: 0, target: 600, response: 0.35, damping: 1, eps: 0.01, active: false };
+const pinA = new Map(M.cities.map(c => [c.n, { x: sel.has(c.n) ? 1 : 0, v: 0, target: sel.has(c.n) ? 1 : 0, response: 0.3, damping: 1, eps: 0.002, active: false }]));
+const spin = { lam: -15, phi: -12, vl: 0, vp: 0, active: false };   // globe rotation, degrees, and its inertia
+
+const mapBox = document.getElementById('mapBox');
+const mapCanvas = document.getElementById('mapCanvas'), rulerCanvas = document.getElementById('rulerCanvas');
+const mctx = mapCanvas.getContext('2d'), rctx = rulerCanvas.getContext('2d');
+const moll = d3.geoProjection(mollweideRaw).precision(0.3);
+const ortho = d3.geoOrthographic().precision(0.3);
+let proj = moll, path = d3.geoPath(moll, mctx);
+const grat = d3.geoGraticule10();
+let W = 0, H = 0, dpr = 1;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const r = mapBox.getBoundingClientRect();
+  W = r.width; H = r.height;
+  mapCanvas.width = Math.round(W * dpr); mapCanvas.height = Math.round(H * dpr);
+  moll.fitExtent([[6, 6], [W - 6, H - 6]], { type: 'Sphere' });
+  ortho.fitExtent([[(W - H) / 2 + 6, 6], [(W + H) / 2 - 6, H - 6]], { type: 'Sphere' });
+  const rr = rulerCanvas.parentElement.getBoundingClientRect();
+  rulerCanvas.width = Math.round(rr.width * dpr); rulerCanvas.height = Math.round(rr.height * dpr);
+  render();
+}
+
+function drawMap() {
+  const ctx = mctx, globe = mode === 'globe', tt = Math.max(0, Math.min(600, t));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  if (globe) ortho.rotate([spin.lam, spin.phi]);
+  const ctr = globe ? ortho.translate() : [W / 2, H / 2], R = globe ? ortho.scale() : W * 0.55;
+  // ocean with a soft limb glow
+  ctx.beginPath(); path({ type: 'Sphere' });
+  const g = globe ? ctx.createRadialGradient(ctr[0] - R * 0.3, ctr[1] - R * 0.35, R * 0.05, ctr[0], ctr[1], R)
+                  : ctx.createRadialGradient(W / 2, H / 2, H * 0.1, W / 2, H / 2, W * 0.55);
+  g.addColorStop(0, C.oceanEdge); g.addColorStop(1, C.ocean);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.save(); ctx.beginPath(); path({ type: 'Sphere' }); ctx.clip();
+  const rings = (list) => { ctx.beginPath(); for (const f of list) { if (!alive(f, tt) || f.pi === undefined) continue;
+    path({ type: 'Polygon', coordinates: [rotRing(f, quat(f.pi, tt))] }); } };
+  rings(crust); ctx.fillStyle = C.shelf; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1;
+  rings(land); ctx.fillStyle = C.land; ctx.fill(); ctx.strokeStyle = C.land; ctx.lineWidth = 0.7; ctx.stroke();
+  // graticule on top, faint, like the exhibit
+  ctx.beginPath(); path(grat); ctx.strokeStyle = 'rgba(232,236,248,0.16)'; ctx.lineWidth = 0.6; ctx.stroke();
+  ctx.beginPath(); path({ type: 'LineString', coordinates: [[-180, 0], [-90, 0], [0, 0], [90, 0], [180, 0]] });
+  ctx.strokeStyle = 'rgba(232,236,248,0.32)'; ctx.stroke();
+  if (globe) { // limb shading so the sphere reads as a sphere
+    const s = ctx.createRadialGradient(ctr[0], ctr[1], R * 0.6, ctr[0], ctr[1], R);
+    s.addColorStop(0, 'rgba(5,9,18,0)'); s.addColorStop(1, 'rgba(5,9,18,0.55)');
+    ctx.fillStyle = s; ctx.fillRect(0, 0, W, H); }
+  ctx.restore();
+  ctx.beginPath(); path({ type: 'Sphere' }); ctx.strokeStyle = C.rule; ctx.lineWidth = 1; ctx.stroke();
+  // city pins: grow in from 0.6 scale, never from nothing
+  ctx.font = `600 12px ${C.mono}`; ctx.textBaseline = 'middle';
+  const centre = globe ? [-spin.lam, -spin.phi] : null;
+  for (const c of cityState()) { const a = pinA.get(c.n).x; if (a < 0.01) continue;
+    if (globe && d3.geoDistance([c.lon, c.lat], centre) > Math.PI / 2 - 0.02) continue;
+    const p = proj([c.lon, c.lat]); if (!p) continue;
+    const s = 0.6 + 0.4 * a;
+    ctx.globalAlpha = Math.min(1, a);
+    ctx.beginPath(); ctx.arc(p[0], p[1], 4.5 * s, 0, 2 * Math.PI); ctx.fillStyle = C.pin; ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
+    const tw = ctx.measureText(c.n).width; const right = p[0] + tw + 14 < W;
+    const tx = right ? p[0] + 9 : p[0] - 9 - tw;
+    ctx.fillStyle = 'rgba(7,11,22,0.72)'; ctx.fillRect(tx - 4, p[1] - 9, tw + 8, 18);
+    ctx.fillStyle = C.ink; ctx.fillText(c.n, tx, p[1] + 0.5); }
+  ctx.globalAlpha = 1;
+}
+
+const PAD = 18;
+const xOf = (ma, w) => PAD + (600 - ma) / 600 * (w - 2 * PAD);
+const maOf = (x, w) => 600 - (x - PAD) / (w - 2 * PAD) * 600;   // unclamped: the drag rubber-bands past the ends
+const rulerW = () => rulerCanvas.width / dpr;
+let pressed = false;
+function drawRuler() {
+  const ctx = rctx, w = rulerW(), h = rulerCanvas.height / dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+  for (const [, a, b, col] of PERIODS) { const x0 = xOf(Math.min(a, 600), w), x1 = xOf(b, w); if (x1 < x0) continue;
+    ctx.fillStyle = col; ctx.globalAlpha = 0.85; ctx.fillRect(x0, h - 9, x1 - x0, 7); ctx.globalAlpha = 1; }
+  ctx.strokeStyle = C.dim; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(xOf(600, w), 24); ctx.lineTo(xOf(0, w), 24); ctx.stroke();
+  const narrow = w < 640;
+  ctx.font = `600 ${narrow ? 9 : 11}px ${C.mono}`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  let last = -1e9;
+  for (const m of TICKS) { const x = xOf(m, w);
+    ctx.beginPath(); ctx.moveTo(x, 20); ctx.lineTo(x, 28); ctx.strokeStyle = C.dim; ctx.stroke();
+    const label = String(m), tw = ctx.measureText(label).width;
+    if (x - tw / 2 > last + 3) { ctx.fillStyle = Math.abs(m - t) < 0.5 ? C.pin : C.ink; ctx.fillText(label, x, 15); last = x + tw / 2; } }
+  // cursor: a touch bigger while held, so the press reads instantly
+  const cx = xOf(t, w), k = pressed ? 1.25 : 1;
+  if (pressed) { ctx.beginPath(); ctx.arc(cx, 25, 13, 0, 2 * Math.PI); ctx.fillStyle = 'rgba(255,111,97,0.16)'; ctx.fill(); }
+  ctx.fillStyle = C.pin; ctx.fillRect(cx - 1, 18, 2, 14);
+  ctx.beginPath(); ctx.moveTo(cx - 6 * k, 27 + 6 * k); ctx.lineTo(cx + 6 * k, 27 + 6 * k); ctx.lineTo(cx, 27); ctx.fill();
+}
+
+function cityState() {
+  const tt = Math.max(0, Math.min(600, t));
+  return M.cities.map(c => { const v = toVec(c.ll[0], c.ll[1]); const q = quat(pidIndex.get(c.p), tt);
+    const r = rotRing({ v: Float64Array.from(v), n: 1 }, q)[0]; return { n: c.n, lon: r[0], lat: r[1] }; });
+}
+
+// ---------- text ----------
+const ageNum = document.getElementById('ageNum'), ruler = document.getElementById('ruler');
+const storyBody = document.getElementById('storyBody');
+let curStory = null;
+function fmtLat(l) { return `${Math.abs(l).toFixed(0)}°${l >= 0 ? 'N' : 'S'}`; }
+function updateText() {
+  const tt = Math.max(0, Math.min(600, t));
+  ageNum.textContent = tt < 0.5 ? '0' : String(Math.round(tt));
+  const per = PERIODS.find(p => tt <= p[1] && tt >= p[2]) || PERIODS[0];
+  document.getElementById('periodName').textContent = per[0] + ' Period';
+  document.getElementById('periodDot').style.background = per[3];
+  const pick = STORY.reduce((best, x) => (x[0] >= tt - 0.5 && (best === null || x[0] < best[0])) ? x : best, null) || STORY[0];
+  if (pick !== curStory) {
+    const first = curStory === null; curStory = pick;
+    document.getElementById('storyTitle').textContent = pick[1];
+    document.getElementById('storyText').textContent = pick[2];
+    // a short blurred cross-fade so the swap reads as one change, not two texts
+    if (!first && storyBody.animate) storyBody.animate(reduceMotion.matches
+      ? [{ opacity: 0.3 }, { opacity: 1 }]
+      : [{ opacity: 0.2, filter: 'blur(2px)', transform: 'translateY(4px)' }, { opacity: 1, filter: 'blur(0)', transform: 'none' }],
+      { duration: 220, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+  }
+  const cs = cityState().filter(c => sel.has(c.n));
+  document.getElementById('readout').innerHTML = cs.length ? cs.map(c => {
+    const today = M.cities.find(x => x.n === c.n).ll[1];
+    return `<strong>${c.n}</strong> at ${fmtLat(c.lat)} <span>(today ${fmtLat(today)})</span>`; }).join('<br>') :
+    'Pick a city to see its latitude through time.';
+  ruler.setAttribute('aria-valuenow', Math.round(tt));
+  ruler.setAttribute('aria-valuetext', `${Math.round(tt)} million years ago, ${per[0]}`);
+}
+
+// ---------- one frame loop for everything that moves ----------
+let loopOn = false, lastTs = 0;
+function render() { if (!loopOn) { loopOn = true; lastTs = 0; requestAnimationFrame(tick); } }
+function tick(ts) {
+  const dt = lastTs ? Math.min(0.05, (ts - lastTs) / 1000) : 0; lastTs = ts;
+  let busy = false;
+  if (playing) { t = Math.max(0, t - dt * speed); busy = true; if (t <= 0) { stop(); writeHash(); } }
+  if (ageS.active) { stepSpring(ageS, dt); t = ageS.x; busy = ageS.active || busy; if (!ageS.active) writeHash(); }
+  for (const s of pinA.values()) if (s.active) { stepSpring(s, dt); busy = busy || s.active; }
+  if (spin.active) {
+    const decay = Math.pow(0.998, dt * 1000);
+    spin.lam += spin.vl * dt; spin.phi = clampPhi(spin.phi + spin.vp * dt); spin.vl *= decay; spin.vp *= decay;
+    if (Math.hypot(spin.vl, spin.vp) < 2) spin.active = false; else busy = true;
+  }
+  drawMap(); drawRuler(); updateText();
+  if (busy) requestAnimationFrame(tick); else loopOn = false;
+}
+
+// ---------- ruler: press, drag 1:1, flick with momentum, snap to the exhibit's stops ----------
+const SNAP_PX = 6;
+function nearestTick(ma, maxMa) { let best = null, d = Infinity;
+  for (const k of TICKS) { const dd = Math.abs(k - ma); if (dd < d) { d = dd; best = k; } }
+  return d <= maxMa ? best : null; }
+let drag = null;
+function springTo(target, v, response, damping) {
+  ageS.x = t; ageS.v = v; ageS.target = target; ageS.response = response; ageS.damping = damping; ageS.active = true;
+  if (reduceMotion.matches) { t = target; ageS.active = false; writeHash(); }
+  render();
+}
+ruler.addEventListener('pointerdown', e => {
+  if (drag || (e.pointerType === 'mouse' && e.button !== 0)) return;   // ignore a second finger
+  ruler.setPointerCapture(e.pointerId); stop();
+  const r = ruler.getBoundingClientRect(), x = e.clientX - r.left, w = r.width, cur = xOf(t, w);
+  const onCursor = Math.abs(x - cur) <= 14;
+  drag = { id: e.pointerId, downX: x, offset: onCursor ? x - cur : 0, hist: [[e.timeStamp, t]], moved: false };
+  pressed = true;
+  if (onCursor) { ageS.active = false; render(); return; }   // grab where it is, from its live value
+  // tap elsewhere: start moving there on press, not on release
+  const target = Math.max(0, Math.min(600, maOf(x, w)));
+  springTo(nearestTick(target, SNAP_PX * 600 / (w - 2 * PAD)) ?? target, ageS.active ? ageS.v : 0, 0.3, 1);
+});
+ruler.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const r = ruler.getBoundingClientRect(), x = e.clientX - r.left - drag.offset;
+  if (!drag.moved && Math.abs(x + drag.offset - drag.downX) < 4) return;   // a little hysteresis so a shaky tap stays a tap
+  drag.moved = true; ageS.active = false;
+  const raw = maOf(x, r.width);
+  t = raw > 600 ? 600 + rubberband(raw - 600, 80) : raw < 0 ? rubberband(raw, 80) : raw;
+  drag.hist.push([e.timeStamp, raw]); if (drag.hist.length > 12) drag.hist.shift();
+  render();
+});
+function endDrag(e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  pressed = false;
+  if (!drag.moved) { drag = null; render(); return; }
+  const w = ruler.getBoundingClientRect().width, v = velocity(drag.hist);   // Ma per second
+  drag = null;
+  const flick = Math.abs(v) > 120;
+  const rest = Math.max(0, Math.min(600, t + (flick ? project(v) : 0)));
+  // a flick lands on the stop nearest where it was heading; a slow release only snaps when close
+  const snapped = flick ? nearestTick(rest, Infinity) : nearestTick(rest, SNAP_PX * 600 / (w - 2 * PAD));
+  const target = snapped ?? rest;
+  if (Math.abs(target - t) < 0.01 && Math.abs(v) < 1) { t = target; writeHash(); render(); return; }
+  springTo(target, flick ? v : 0, 0.4, flick ? 0.85 : 1);
+}
+ruler.addEventListener('pointerup', endDrag);
+ruler.addEventListener('pointercancel', endDrag);
+// keyboard steps are instant: animating something pressed repeatedly only slows it down
+ruler.addEventListener('keydown', e => {
+  let nt;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') nt = TICKS.find(k => k < t - 0.01) ?? 0;
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') nt = TICKS.slice().reverse().find(k => k > t + 0.01) ?? 600;
+  else if (e.key === 'Home') nt = 600; else if (e.key === 'End') nt = 0; else return;
+  e.preventDefault(); stop(); ageS.active = false; t = nt; writeHash(); render(); });
+
+// ---------- globe: drag to spin, release keeps the spin and decays like a scroll ----------
+const clampPhi = p => Math.max(-85, Math.min(85, p));
+let gdrag = null;
+mapBox.addEventListener('pointerdown', e => {
+  if (mode !== 'globe' || gdrag || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  mapBox.setPointerCapture(e.pointerId); spin.active = false;
+  gdrag = { id: e.pointerId, x: e.clientX, y: e.clientY, lam: spin.lam, phi: spin.phi, hl: [[e.timeStamp, spin.lam]], hp: [[e.timeStamp, spin.phi]] };
+  mapBox.classList.add('dragging');
+});
+mapBox.addEventListener('pointermove', e => {
+  if (!gdrag || e.pointerId !== gdrag.id) return;
+  const k = 180 / (Math.PI * ortho.scale());   // degrees per pixel at the centre, so the surface tracks the finger
+  spin.lam = gdrag.lam + (e.clientX - gdrag.x) * k;
+  spin.phi = clampPhi(gdrag.phi - (e.clientY - gdrag.y) * k);
+  gdrag.hl.push([e.timeStamp, spin.lam]); gdrag.hp.push([e.timeStamp, spin.phi]);
+  if (gdrag.hl.length > 12) { gdrag.hl.shift(); gdrag.hp.shift(); }
+  render();
+});
+function endGlobe(e) {
+  if (!gdrag || e.pointerId !== gdrag.id) return;
+  spin.vl = velocity(gdrag.hl); spin.vp = velocity(gdrag.hp); gdrag = null;
+  mapBox.classList.remove('dragging');
+  if (!reduceMotion.matches && Math.hypot(spin.vl, spin.vp) > 20) { spin.active = true; render(); }
+}
+mapBox.addEventListener('pointerup', endGlobe);
+mapBox.addEventListener('pointercancel', endGlobe);
+
+// ---------- projection switch ----------
+const seg = document.getElementById('seg');
+function setMode(m, quiet) {
+  if (m === mode && !quiet) return;
+  mode = m; proj = m === 'globe' ? ortho : moll; path = d3.geoPath(proj, mctx);
+  seg.dataset.mode = m;
+  seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
+  mapBox.classList.toggle('globe', m === 'globe');
+  mapCanvas.setAttribute('aria-label', m === 'globe' ? 'Globe of reconstructed continents; drag to turn it' : 'Mollweide map of reconstructed continents');
+  document.getElementById('hint').textContent = m === 'globe'
+    ? 'Drag the globe to turn it. Drag or flick the ruler to travel in time.'
+    : 'Drag or flick the ruler to travel in time. Arrow keys step between its marks.';
+  spin.active = false;
+  if (!quiet && mapCanvas.animate) mapCanvas.animate(reduceMotion.matches
+    ? [{ opacity: 0 }, { opacity: 1 }]
+    : [{ opacity: 0, transform: 'scale(0.97)', filter: 'blur(4px)' }, { opacity: 1, transform: 'none', filter: 'blur(0)' }],
+    { duration: 240, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+  if (!quiet) writeHash();
+  render();
+}
+seg.addEventListener('click', e => { const b = e.target.closest('button'); if (b) setMode(b.dataset.mode); });
+
+// ---------- playback ----------
+const playBtn = document.getElementById('play'), playIcon = document.getElementById('playIcon'), playLabel = document.getElementById('playLabel');
+function start() { if (t <= 0.01) t = 600; ageS.active = false; playing = true;
+  playLabel.textContent = 'Pause'; playIcon.setAttribute('d', 'M1 0 H4 V10 H1 Z M6 0 H9 V10 H6 Z'); playBtn.setAttribute('aria-pressed', 'true'); render(); }
+function stop() { if (!playing) return; playing = false;
+  playLabel.textContent = 'Play'; playIcon.setAttribute('d', 'M1 0 L10 5 L1 10 Z'); playBtn.setAttribute('aria-pressed', 'false'); }
+playBtn.addEventListener('click', () => { if (playing) { stop(); writeHash(); } else start(); });
+// rare, explanatory: sweep back through time rather than cut to it
+document.getElementById('reset').addEventListener('click', () => { stop(); springTo(600, 0, 0.7, 1); });
+const speedIn = document.getElementById('speed'), speedOut = document.getElementById('speedOut');
+speedIn.addEventListener('input', () => { speed = +speedIn.value; speedOut.textContent = `${speed} Myr/s`; });
+
+// ---------- cities ----------
+const cityBox = document.getElementById('cities');
+for (const c of M.cities) { const b = document.createElement('button'); b.type = 'button'; b.textContent = c.n;
+  b.setAttribute('aria-pressed', sel.has(c.n)); b.addEventListener('click', () => {
+    const on = !sel.has(c.n); on ? sel.add(c.n) : sel.delete(c.n); b.setAttribute('aria-pressed', on);
+    const s = pinA.get(c.n); s.target = on ? 1 : 0; s.response = on ? 0.3 : 0.18;   // leave faster than arrive
+    if (reduceMotion.matches) { s.x = s.target; s.active = false; } else s.active = true;
+    render(); }); cityBox.appendChild(b); }
+
+// ---------- deep links: #ma240, #globe, #globe-ma240 ----------
+function readHash() {
+  const h = (location.hash || '').slice(1).toLowerCase();
+  const m = h.match(/ma(\d{1,3}(?:\.\d+)?)/); if (m) t = Math.max(0, Math.min(600, +m[1]));
+  const g = /(^|-)globe($|-)/.test(h) ? 'globe' : 'map'; if (g !== mode) setMode(g, true);
+}
+let hashTimer = 0;
+function writeHash() {
+  clearTimeout(hashTimer);
+  hashTimer = setTimeout(() => { try {
+    const tok = (mode === 'globe' ? 'globe-' : '') + 'ma' + Math.round(Math.max(0, Math.min(600, t)));
+    history.replaceState(null, '', '#' + tok); } catch (_) {} }, 150);
+}
+window.addEventListener('hashchange', () => { readHash(); render(); });
+
+readHash();
+window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(mapBox);
+resize();
+})();
+</script>
