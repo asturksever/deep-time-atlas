@@ -3,6 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Deep Time Globe</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2312308c'/%3E%3Cpath d='M8 11c4-3 9-1 10 3s-3 7-6 10c-3-3-7-9-4-13z' fill='%237d8a5a'/%3E%3Cpath d='M19 18c3-1 6 1 6 4-2 2-5 3-7 2 0-2 0-4 1-6z' fill='%237d8a5a'/%3E%3Ccircle cx='23' cy='9' r='3' fill='%23ff6f61'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
@@ -260,6 +261,9 @@ button { touch-action: manipulation; }
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+// draw only when something on screen changed: the age, the camera, a city, the ruler or the window size
+let dirty = true, sigT = NaN; const sig = new Float64Array(7);
+const invalidate = () => { dirty = true; };
 
 const M = JSON.parse(document.getElementById('model').textContent);
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -500,7 +504,7 @@ ruler.addEventListener('pointerdown', e => {
   if (drag || (e.pointerType === 'mouse' && e.button !== 0)) return;
   ruler.setPointerCapture(e.pointerId); stop();
   const r = ruler.getBoundingClientRect(), x = e.clientX - r.left, cur = xOf(t, r.width), on = Math.abs(x - cur) <= 14;
-  drag = { id: e.pointerId, downX: x, offset: on ? x - cur : 0, hist: [[e.timeStamp, t]], moved: false }; pressed = true;
+  drag = { id: e.pointerId, downX: x, offset: on ? x - cur : 0, hist: [[e.timeStamp, t]], moved: false }; pressed = true; invalidate();
   if (on) { ageS.active = false; return; }
   const target = Math.max(0, Math.min(600, maOf(x, r.width)));
   springTo(nearestTick(target, 6 * 600 / (r.width - 2 * PAD)) ?? target, ageS.active ? ageS.v : 0, 0.3, 1);
@@ -514,7 +518,7 @@ ruler.addEventListener('pointermove', e => {
   drag.hist.push([e.timeStamp, raw]); if (drag.hist.length > 12) drag.hist.shift();
 });
 function endDrag(e) {
-  if (!drag || e.pointerId !== drag.id) return; pressed = false;
+  if (!drag || e.pointerId !== drag.id) return; pressed = false; invalidate();
   if (!drag.moved) { drag = null; return; }
   const w = ruler.getBoundingClientRect().width, v = velocity(drag.hist); drag = null;
   const flick = Math.abs(v) > 120, rest = Math.max(0, Math.min(600, t + (flick ? project(v) : 0)));
@@ -569,6 +573,7 @@ function addCity(d) {   // d: { id, n, sub, ll: [lon, lat], p, custom }
   c.mesh = new THREE.Mesh(pinGeo, pinMat); earth.add(c.mesh);
   c.lbl = document.createElement('div'); c.lbl.className = 'lbl'; c.lbl.innerHTML = `<i></i>${esc(c.n)}<small></small>`;
   c.lbl.addEventListener('click', () => setFollow(c.id)); labels.appendChild(c.lbl);
+  c.small = c.lbl.querySelector('small'); c.widths = {}; c.txt = ''; c.op = ''; c.tr = '';
   cities.push(c); return c;
 }
 function removeCity(c) { earth.remove(c.mesh); c.lbl.remove(); sel.delete(c.id); cities.splice(cities.indexOf(c), 1); if (follow === c.id) setFollow(null); }
@@ -578,6 +583,7 @@ const list = document.getElementById('cityList');
 const GO = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>';
 const RM = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 function renderList() {
+  invalidate();
   list.innerHTML = cities.map((c, i) => `<div class="city${c.custom ? ' custom' : ''}" data-i="${i}" aria-checked="${sel.has(c.id)}"><button class="nm" type="button" role="switch" aria-checked="${sel.has(c.id)}" title="${esc(c.sub || c.n)}"><span class="tick"></span>${esc(c.n)}</button><span class="lat" data-lat></span><button class="go" type="button" aria-label="Follow ${esc(c.n)}" title="Follow ${esc(c.n)}">${GO}</button>${c.custom ? `<button class="rm" type="button" aria-label="Remove ${esc(c.n)}" title="Remove">${RM}</button>` : ''}</div>`).join('');
   list.querySelectorAll('.city').forEach(row => { const c = cities[+row.dataset.i];
     row.querySelector('.nm').addEventListener('click', () => toggleCity(c, !sel.has(c.id)));
@@ -585,7 +591,7 @@ function renderList() {
     row.querySelector('.rm')?.addEventListener('click', () => { removeCity(c); renderList(); save(); }); });
   const n = document.getElementById('cityCount'); n.textContent = sel.size; n.hidden = !sel.size;
 }
-function toggleCity(c, on) { on ? sel.add(c.id) : sel.delete(c.id);
+function toggleCity(c, on) { invalidate(); on ? sel.add(c.id) : sel.delete(c.id);
   const row = list.querySelector(`.city[data-i="${cities.indexOf(c)}"]`);
   if (row) { row.setAttribute('aria-checked', on); row.querySelector('.nm').setAttribute('aria-checked', on); }
   const n = document.getElementById('cityCount'); n.textContent = sel.size; n.hidden = !sel.size;
@@ -648,7 +654,7 @@ function placePop() {   // on wider screens the panel sits just above its button
   pop.style.setProperty('--pop-right', `${Math.max(8, innerWidth - r.right)}px`);
   pop.style.setProperty('--pop-bottom', `${innerHeight - r.top + 10}px`);
 }
-function openPop() { placePop(); pop.hidden = false; citiesBtn.setAttribute('aria-expanded', 'true'); }
+function openPop() { invalidate(); placePop(); pop.hidden = false; citiesBtn.setAttribute('aria-expanded', 'true'); }
 function closePop() { pop.hidden = true; citiesBtn.setAttribute('aria-expanded', 'false'); }
 citiesBtn.addEventListener('click', e => { e.stopPropagation(); pop.hidden ? openPop() : closePop(); });
 document.getElementById('popDone').addEventListener('click', () => { closePop(); citiesBtn.focus(); });
@@ -733,7 +739,7 @@ function keepContinentsInView() {
 // the free area is the screen minus the dock (and the card on phones, where it spans the top); the planet is centred in it
 const dockEl = document.querySelector('.dock');
 let free = { top: 0, bottom: innerHeight };
-function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h;
+function resize() { invalidate(); const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h;
   camera.fov = w / h < 0.8 ? 48 : 35;
   const top = (w <= 640 ? card.getBoundingClientRect().bottom : 0) + 12, bottom = dockEl.getBoundingClientRect().top - 12;
   free = { top, bottom };
@@ -756,6 +762,12 @@ function sizeVeil() {
   const d = camera.position.length(), r = 1.02 / Math.sqrt(Math.max(1e-3, d * d - 1.04));
   loadingEl.style.setProperty('--r', `${(r / Math.tan(camera.fov * D / 2) * innerHeight / 2).toFixed(1)}px`);
 }
+function setLbl(c, op, tr) {   // touch the DOM only when a value actually changes
+  if (op !== null && op !== c.op) { c.op = op; c.lbl.style.opacity = op; c.lbl.style.pointerEvents = op === '1' ? 'auto' : 'none'; }
+  if (tr !== null && tr !== c.tr) { c.tr = tr; c.lbl.style.transform = tr; }
+}
+// web fonts change label widths once they arrive
+document.fonts?.ready.then(() => { for (const c of cities) c.widths = {}; invalidate(); });
 function frame() {
   const dt = Math.min(0.05, clock.getDelta());
   if (playing) { t = Math.max(0, t - dt * speed); if (t <= 0) stop(); }
@@ -766,7 +778,6 @@ function frame() {
       if (vis) { const q = quat(g.pi, tt); g.mesh.quaternion.set(q[1], q[2], q[3], q[0]); } }
     lastT = tt; updateText();
   }
-  drawRuler();
   // camera behaviours, all frame-rate independent and critically damped
   const dist = camera.position.length();
   const ease = tau => 1 - Math.exp(-dt / tau);
@@ -780,27 +791,34 @@ function frame() {
   // drag speed scales with zoom, so the surface tracks the finger near the ground
   controls.rotateSpeed = Math.max(0.12, Math.min(1, (dist - 1) * 0.42));
   controls.update();
+  const cp = camera.position, cq = camera.quaternion;
+  const camMoved = cp.x !== sig[0] || cp.y !== sig[1] || cp.z !== sig[2] || cq.x !== sig[3] || cq.y !== sig[4] || cq.z !== sig[5] || cq.w !== sig[6];
+  if (!dirty && !camMoved && tt === sigT) return;   // nothing changed: keep the last frame on screen
+  dirty = false; sigT = tt; sig[0] = cp.x; sig[1] = cp.y; sig[2] = cp.z; sig[3] = cq.x; sig[4] = cq.y; sig[5] = cq.z; sig[6] = cq.w;
+  drawRuler();
   // pins and labels
   const camDir = camera.position.clone().normalize();
   const placed = [];
   for (const c of cities) { const on = sel.has(c.id);
     const p = cityModel(c).multiplyScalar(1.007); c.mesh.position.copy(p); c.mesh.visible = on;
-    if (!on) { c.lbl.style.opacity = 0; c.lbl.style.pointerEvents = 'none'; continue; }
+    if (!on) { setLbl(c, '0', null); continue; }
     const w = m2w(p.toArray()), facing = w.clone().normalize().dot(camDir);
     tmpV.copy(w).project(camera);
     const x = (tmpV.x + 1) / 2 * innerWidth, y = (1 - tmpV.y) / 2 * innerHeight;
     const vis = facing > 0.18;
-    c.lbl.style.opacity = vis ? 1 : 0; c.lbl.style.pointerEvents = vis ? 'auto' : 'none';
-    c.lbl.querySelector('small').textContent = fmtLat(Math.asin(Math.max(-1, Math.min(1, p.z / p.length()))) / D);
+    setLbl(c, vis ? '1' : '0', null);
+    const txt = fmtLat(Math.asin(Math.max(-1, Math.min(1, p.z / p.length()))) / D);
+    if (txt !== c.txt) { c.txt = txt; c.small.textContent = txt; }
     placed.push({ c, x: x + 9, y: y - 11, vis });
   }
   // labels that would collide step down until they clear the ones above them
   placed.sort((a, b) => a.y - b.y);
   const taken = [];
-  for (const l of placed) { const w = l.c.lbl.offsetWidth || 90;
+  // a label's width only depends on its name and how many characters its latitude has, so measure each length once
+  for (const l of placed) { const c = l.c, n = c.txt.length; const w = c.widths[n] ?? (c.widths[n] = c.lbl.offsetWidth || 90);
     // the test uses 22 px while the step is 24 px, so floating-point rounding can never re-trigger the same pair; the pass cap is a second guard
     if (l.vis) { for (let pass = 0, moved = true; moved && pass < 24; pass++) { moved = false; for (const o of taken) if (l.y > o.y - 22 && l.y < o.y + 22 && l.x < o.x + o.w + 4 && o.x < l.x + w + 4) { l.y = o.y + 24; moved = true; } } taken.push({ x: l.x, y: l.y, w }); }
-    l.c.lbl.style.transform = `translate3d(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px, 0)`; }
+    setLbl(c, null, `translate3d(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px, 0)`); }
   for (const pt of poleTags) {
     // hidden when the planet is between the camera and the tag
     const d = pt.tip.clone().sub(camera.position), b = camera.position.dot(d), a = d.lengthSq(), cc = camera.position.lengthSq() - 1, disc = b * b - a * cc;
@@ -824,7 +842,7 @@ renderer.setAnimationLoop(frame);
 new THREE.TextureLoader().load('earth-4k.jpg', async tex => {
   tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   oceanFromImagery(tex.image);
-  await build(tex); lastT = -1;
+  await build(tex); lastT = -1; invalidate();
   frame();   // place plates for the current age before choosing where to look
   const dir = homeDir(); camera.position.copy(dir.clone().multiplyScalar(fitDist() + 2.5));
   fly = { dir, dist: fitDist() };
