@@ -794,7 +794,8 @@ function frame() {
   placed.sort((a, b) => a.y - b.y);
   const taken = [];
   for (const l of placed) { const w = l.c.lbl.offsetWidth || 90;
-    if (l.vis) { let moved = true; while (moved) { moved = false; for (const o of taken) if (Math.abs(o.y - l.y) < 24 && l.x < o.x + o.w + 4 && o.x < l.x + w + 4) { l.y = o.y + 24; moved = true; } } taken.push({ x: l.x, y: l.y, w }); }
+    // the test uses 22 px while the step is 24 px, so floating-point rounding can never re-trigger the same pair; the pass cap is a second guard
+    if (l.vis) { for (let pass = 0, moved = true; moved && pass < 24; pass++) { moved = false; for (const o of taken) if (l.y > o.y - 22 && l.y < o.y + 22 && l.x < o.x + o.w + 4 && o.x < l.x + w + 4) { l.y = o.y + 24; moved = true; } } taken.push({ x: l.x, y: l.y, w }); }
     l.c.lbl.style.transform = `translate3d(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px, 0)`; }
   for (const pt of poleTags) {
     // hidden when the planet is between the camera and the tag
