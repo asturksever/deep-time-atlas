@@ -4,11 +4,11 @@ Read this first. It doubles as the project's CLAUDE.md (copy or symlink it as `C
 
 ## What this is
 
-An interactive, single-file web page that recreates a museum plate-tectonics display: a Mollweide world map you can scrub from 600 million years ago (Ma) to today. It uses only open data. The museum screen it copies has a ruler across the top (600, 560, 540 ... 20, 0.05, 0 "million years ago") with a red marker at the current age, and the reconstructed globe below it. Reference photos were taken by Said at the exhibit on 11 Oct 2026.
+An interactive, single-file web page that recreates a museum plate-tectonics display: a Mollweide world map you can scrub from 600 million years ago (Ma) to today. It uses only open data. The museum screen it copies has a ruler across the top (600, 560, 540 ... 20, 0.05, 0 "million years ago") with a red marker at the current age, and the reconstructed globe below it. The reference was a photo of the exhibit screen.
 
-Current published version (v2, same URL as v1): https://claude.ai/artifact/2PxPtubcJoT69p3sKKYxA2 (private to Said). Built from `dist/deep-time-atlas.html`; the v1 build is kept at `dist/deep-time-atlas-v1.html`.
+Live site: https://asturksever.github.io/deep-time-atlas/ (globe) and `atlas.html` (2D map), served from `docs/`. The same pages can also be published as Claude artifacts from `dist/`.
 
-Background: Said linked https://github.com/morluto/rea, which is a reverse-engineering MCP tool and has nothing to do with plate tectonics. We read the request as "reverse-engineer what this museum screen shows and rebuild it on open data." Don't use anything from that repo.
+Brief: work out what the museum screen shows and rebuild it on open data.
 
 ## Owner preferences (apply to all output)
 
@@ -84,7 +84,7 @@ dist/deep-time-atlas-v1.html  v1 build, kept for reference
 
 ## Deep Time Globe (3D, added 15 Oct 2026)
 
-`src/globe.html` -> `dist/deep-time-globe.html`, a full-screen photorealistic globe (three.js 0.160.0 from jsDelivr via an import map), published at https://claude.ai/artifact/3sbCw6PXnK1DMudrk5uy3h. It needs `earth-4k.jpg` and `places.json` next to it: NASA Blue Marble Next Generation, topography and bathymetry, July 2004, resized to 4096x2048 (`assets/earth-4k.jpg`; the 5400x2700 original is in `assets/src/`). When publishing as an Artifact, pass it in `files`.
+`src/globe.html` -> `dist/deep-time-globe.html`, a full-screen photorealistic globe (three.js 0.160.0 from jsDelivr via an import map). It needs `earth-4k.jpg` and `places.json` next to it: NASA Blue Marble Next Generation, topography and bathymetry, July 2004, resized to 4096x2048 (`assets/earth-4k.jpg`; the 5400x2700 original is in `assets/src/`). When publishing as an Artifact, pass it in `files`.
 
 - Each crust and coastline polygon is triangulated once in present-day lon/lat (earcut via `THREE.ShapeUtils`, with a 4 degree grid of Steiner points), split until no edge is longer than 2 degrees so chords don't sag under the ocean sphere, and textured with today's imagery by its present-day lon/lat. Polygons that wind round a pole are closed along that pole.
 - Features are merged per (kind, plate, begin, end), about 1,150 meshes. Each mesh's quaternion is the plate rotation, so the GPU does the reconstruction.
@@ -92,7 +92,7 @@ dist/deep-time-atlas-v1.html  v1 build, kept for reference
 - The camera brings the continents back into view when time carries them away, but not within 4 s of you steering it. Tapping a city label follows that city.
 - Every visit opens at 600 Ma. `#ma240` still opens at that age, but the page no longer rewrites the address.
 - Default cities on: London, New York, Sydney, Tokyo, Istanbul. City search uses `places.json` (GeoNames cities15000, CC BY 4.0, built by `scripts/gazetteer.py`, fetched on first search). A searched place gets its plate from the smallest present-day static polygon containing it, else a coastline polygon, else the nearest coastline piece within 1.5 degrees. This matches pyGPlates' PlatePartitioner for all eight built-in cities. Added cities and on/off choices persist per viewer in localStorage.
-- Layout (16 Oct 2026): the time dock is one slim row (Play, back to 600 Ma, ruler, speed, Cities), and two rows under 760 px. All sources and caveats live in the i sheet ("Sources and limits"); there is no credit line in the dock any more, at Said's request. The camera uses `setViewOffset` to centre the planet in the space between the dock (and the card on phones), and `fitDist()` picks the distance that shows the whole planet with its atmosphere. Loading shows an opaque planet-sized veil with a breathing highlight instead of a spinner.
+- Layout (16 Oct 2026): the time dock is one slim row (Play, back to 600 Ma, ruler, speed, Cities), and two rows under 760 px. All sources and caveats live in the i sheet ("Sources and limits"); there is no credit line in the dock any more, by the owner's choice. The camera uses `setViewOffset` to centre the planet in the space between the dock (and the card on phones), and `fitDist()` picks the distance that shows the whole planet with its atmosphere. Loading shows an opaque planet-sized veil with a breathing highlight instead of a spinner.
 - N and S tags with a short axis stub and ring mark the spin axis, which is fixed in the palaeomagnetic frame.
 - Hairline seams between neighbouring plates come from the 0.12 degree polygon simplification. They show in the 2D page too.
 
@@ -117,11 +117,11 @@ dist/deep-time-atlas-v1.html  v1 build, kept for reference
 - `Rotation` has no quaternion getter. Build it from `get_lat_lon_euler_pole_and_angle_degrees()` (see `reconstruct.py`).
 - Polygons crossing the dateline need longitude unwrapping before shapely simplification, then re-wrapping.
 - The published artifact runs under a CSP: scripts only from cdnjs, jsDelivr, unpkg; no fetch to other hosts; no iframes. Keep d3 pinned at `7.9.0` on cdnjs. For local screenshots in a sandbox that blocks cdnjs, `npm pack d3@7.9.0` and set `D3_LOCAL`.
-- Republishing to the same artifact: from a new conversation, pass the URL above as `url` and read the artifact first, or the publish will create a new one.
+- Republishing an existing Claude artifact: from a new conversation, pass its URL as `url` and read the artifact first, or the publish will create a new one.
 
 ## Definition of done for any change
 
 1. `make all` runs clean.
 2. `make shots`: check 600, 240, 90 and 0 Ma on desktop plus 240 Ma on phone. Look for no page errors, scrollWidth equal to the viewport width, continents in sensible places (Pangaea around 250 Ma, open South Atlantic by 90 Ma), and pins inside their continents.
-3. The footer attribution is still present.
+3. The full attribution is still present (the 2D page's footer, the globe's Sources and limits sheet).
 4. No em dashes anywhere (`grep -rn "—" src scripts` should return nothing).

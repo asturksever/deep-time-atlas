@@ -33,3 +33,7 @@ The raw downloads go in `assets/src/` (ignored by git):
 - City search: GeoNames, CC BY 4.0.
 - Geologic time scale and period colours: International Commission on Stratigraphy, ICS chart 2023/09.
 - Rendering: three.js (globe) and d3-geo (2D map), loaded from public CDNs.
+
+## Licence
+
+The code is MIT licensed (see `LICENSE`). The data keeps its own terms: the plate model and the GeoNames city list are CC BY 4.0, and the NASA imagery is free to use with credit. Keep the credits above when you reuse them.
