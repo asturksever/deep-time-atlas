@@ -129,7 +129,19 @@ input[type="range"] { accent-color: var(--pin); width: 64px; }
   display: flex; align-items: center; gap: 6px; transition: opacity var(--dur-small) ease; cursor: pointer; will-change: transform; }
 .pole { position: absolute; left: 0; top: 0; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; display: grid; place-items: center; opacity: 0;
   font: 600 10px var(--mono); color: var(--ink); background: rgba(8, 12, 24, 0.55); border: 1px solid rgba(238, 242, 251, 0.35); transition: opacity var(--dur-small) ease; will-change: transform; }
-.lbl i { width: 7px; height: 7px; border-radius: 50%; background: var(--pin); box-shadow: 0 0 0 2px rgba(255,111,97,0.25); }
+.lbl { transition: opacity var(--dur-small) ease, border-color var(--dur-small) ease, background-color var(--dur-small) ease; }
+.lbl.hot, .lbl.following { border-color: rgba(255, 111, 97, 0.75); }
+.lbl.following { background: rgba(38, 16, 16, 0.72); }
+/* leader lines: a hairline from each pin to its label, with a wider invisible stroke so it is easy to hit */
+#leaders { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.ld { opacity: 0; transition: opacity var(--dur-small) ease; }
+.ld.on { opacity: 1; }
+.ld .hit { stroke: transparent; stroke-width: 14; stroke-linecap: round; pointer-events: none; cursor: pointer; }
+.ld.on .hit { pointer-events: stroke; }
+.ld .ln { stroke: rgba(238, 242, 251, 0.55); stroke-width: 1; transition: stroke var(--dur-small) ease, stroke-width var(--dur-small) ease; }
+.ld .an { fill: var(--pin); stroke: rgba(8, 12, 24, 0.85); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; transition: transform var(--dur-small) var(--ease-out); }
+.ld.hot .ln, .ld.following .ln { stroke: var(--pin); stroke-width: 1.5; }
+.ld.hot .an, .ld.following .an { transform: scale(1.45); }
 .lbl small { font: 500 11px var(--mono); color: var(--ink-dim); }
 
 /* ---------- about sheet ---------- */
@@ -198,7 +210,7 @@ button { touch-action: manipulation; }
 </style>
 
 <div id="stage" aria-label="3D globe of reconstructed continents. Drag to turn it, scroll or pinch to zoom."></div>
-<div id="labels" aria-hidden="true"></div>
+<div id="labels" aria-hidden="true"><svg id="leaders"></svg></div>
 
 <section class="card glass" id="card" aria-live="polite">
   <div class="card-top">
@@ -444,6 +456,16 @@ for (const s of [1, -1]) {
   poleTags.push({ el, tip: new THREE.Vector3(0, s * 1.17, 0) });   // world space: the model's z axis is world y
 }
 
+// a tap (not a drag) near a city's pin follows that city
+{ let down = null;
+  renderer.domElement.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY, t: e.timeStamp }; });
+  renderer.domElement.addEventListener('pointerup', e => {
+    if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6 || e.timeStamp - down.t > 400) { down = null; return; }
+    down = null; let best = null, bd = e.pointerType === 'touch' ? 28 : 18;
+    for (const c of cities) if (c.sv) { const d = Math.hypot(c.sx - e.clientX, c.sy - e.clientY); if (d < bd) { bd = d; best = c; } }
+    if (best) setFollow(best.id);
+  }); }
+
 // ---------- controls: drag to turn, pinch or scroll to zoom, with inertia ----------
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.dampingFactor = 0.075; controls.enablePan = false;
@@ -560,19 +582,28 @@ function updateText() {
 const DEFAULT_ON = ['London', 'New York', 'Sydney', 'Tokyo', 'Istanbul'];
 const STORE = 'deep-time-globe.cities';
 const pinGeo = new THREE.SphereGeometry(0.007, 16, 8), pinMat = new THREE.MeshBasicMaterial({ color: 0xff6f61 });
-const labels = document.getElementById('labels');
+const labels = document.getElementById('labels'), leaders = document.getElementById('leaders');
 const cities = [], sel = new Set();
 const esc = x => String(x).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 function addCity(d) {   // d: { id, n, sub, ll: [lon, lat], p, custom }
   if (cities.some(c => c.id === d.id)) return cities.find(c => c.id === d.id);
   const c = { ...d, pi: pidIndex.get(d.p), v: toVec(d.ll[0], d.ll[1]), today: d.ll[1] };
   c.mesh = new THREE.Mesh(pinGeo, pinMat); earth.add(c.mesh);
-  c.lbl = document.createElement('div'); c.lbl.className = 'lbl'; c.lbl.innerHTML = `<i></i>${esc(c.n)}<small></small>`;
+  c.lbl = document.createElement('div'); c.lbl.className = 'lbl'; c.lbl.innerHTML = `${esc(c.n)}<small></small>`;
   c.lbl.addEventListener('click', () => setFollow(c.id)); labels.appendChild(c.lbl);
-  c.small = c.lbl.querySelector('small'); c.widths = {}; c.txt = ''; c.op = ''; c.tr = '';
+  c.small = c.lbl.querySelector('small'); c.widths = {}; c.txt = ''; c.op = ''; c.tr = ''; c.lk = '';
+  // its leader line: a visible hairline, a wide invisible hit line and an anchor dot on the pin
+  const NS = 'http://www.w3.org/2000/svg';
+  c.g = document.createElementNS(NS, 'g'); c.g.setAttribute('class', 'ld');
+  c.g.innerHTML = '<line class="hit"/><line class="ln"/><circle class="an" r="3.2"/>';
+  [c.hit, c.ln, c.an] = c.g.children; leaders.appendChild(c.g);
+  c.g.addEventListener('click', () => setFollow(c.id));
+  // pointing at either the label or the line lights up both
+  const hot = on => { c.lbl.classList.toggle('hot', on); c.g.classList.toggle('hot', on); };
+  for (const el of [c.lbl, c.g]) { el.addEventListener('pointerenter', () => hot(true)); el.addEventListener('pointerleave', () => hot(false)); }
   cities.push(c); return c;
 }
-function removeCity(c) { earth.remove(c.mesh); c.lbl.remove(); sel.delete(c.id); cities.splice(cities.indexOf(c), 1); if (follow === c.id) setFollow(null); }
+function removeCity(c) { earth.remove(c.mesh); c.lbl.remove(); c.g.remove(); sel.delete(c.id); cities.splice(cities.indexOf(c), 1); if (follow === c.id) setFollow(null); }
 const fmtLat = l => `${Math.abs(l).toFixed(0)}°${l >= 0 ? 'N' : 'S'}`;
 function cityModel(c) { const q = quat(c.pi, t); return new THREE.Vector3(...c.v).applyQuaternion(new THREE.Quaternion(q[1], q[2], q[3], q[0])); }
 const list = document.getElementById('cityList');
@@ -582,7 +613,9 @@ function renderList() {
   invalidate();
   list.innerHTML = cities.map((c, i) => `<div class="city${c.custom ? ' custom' : ''}" data-i="${i}" aria-checked="${sel.has(c.id)}"><button class="nm" type="button" role="switch" aria-checked="${sel.has(c.id)}" title="${esc(c.sub || c.n)}"><span class="tick"></span>${esc(c.n)}</button><span class="lat" data-lat></span><button class="go" type="button" aria-label="Follow ${esc(c.n)}" title="Follow ${esc(c.n)}">${GO}</button>${c.custom ? `<button class="rm" type="button" aria-label="Remove ${esc(c.n)}" title="Remove">${RM}</button>` : ''}</div>`).join('');
   list.querySelectorAll('.city').forEach(row => { const c = cities[+row.dataset.i];
-    row.querySelector('.nm').addEventListener('click', () => toggleCity(c, !sel.has(c.id)));
+    row.querySelector('.nm').addEventListener('click', () => { const on = !sel.has(c.id); toggleCity(c, on);
+      // switching a city on starts tracking it; on phones the sheet closes so the camera move is visible
+      if (on) { setFollow(c.id); if (innerWidth <= 640) closePop(); } });
     row.querySelector('.go').addEventListener('click', () => { toggleCity(c, true); setFollow(c.id); closePop(); });
     row.querySelector('.rm')?.addEventListener('click', () => { removeCity(c); renderList(); save(); }); });
   const n = document.getElementById('cityCount'); n.textContent = sel.size; n.hidden = !sel.size;
@@ -664,7 +697,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidde
 
 // ---------- camera: follow a city, recentre, slow spin ----------
 const followEl = document.getElementById('follow');
-function setFollow(id) { follow = id; followEl.hidden = !id; if (id) { const c = cities.find(x => x.id === id); document.getElementById('followName').textContent = `Following ${c ? c.n : ''}`; fly = null; } }
+function setFollow(id) { follow = id; followEl.hidden = !id; invalidate();
+  for (const c of cities) { const f = c.id === id; c.lbl.classList.toggle('following', f); c.g.classList.toggle('following', f); } if (id) { const c = cities.find(x => x.id === id); document.getElementById('followName').textContent = `Following ${c ? c.n : ''}`; fly = null; } }
 document.getElementById('unfollow').addEventListener('click', () => setFollow(null));
 function lookAtModel(lon, lat) { return m2w(toVec(lon, lat)).normalize(); }
 document.getElementById('home').addEventListener('click', () => { setFollow(null); fly = { dir: homeDir(), dist: fitDist() }; });
@@ -758,6 +792,14 @@ function sizeVeil() {
   const d = camera.position.length(), r = 1.02 / Math.sqrt(Math.max(1e-3, d * d - 1.04));
   loadingEl.style.setProperty('--r', `${(r / Math.tan(camera.fov * D / 2) * innerHeight / 2).toFixed(1)}px`);
 }
+function setLead(c, on, x1, y1, x2, y2) {   // move the leader line only when its geometry changes
+  if (c.g.classList.contains('on') !== on) c.g.classList.toggle('on', on);
+  if (!on) return;
+  const k = `${x1.toFixed(1)},${y1.toFixed(1)},${x2.toFixed(1)},${y2.toFixed(1)}`; if (k === c.lk) return; c.lk = k;
+  const [a, b, d, e] = k.split(',');
+  for (const ln of [c.hit, c.ln]) { ln.setAttribute('x1', a); ln.setAttribute('y1', b); ln.setAttribute('x2', d); ln.setAttribute('y2', e); }
+  c.an.setAttribute('cx', a); c.an.setAttribute('cy', b);
+}
 function setLbl(c, op, tr) {   // touch the DOM only when a value actually changes
   if (op !== null && op !== c.op) { c.op = op; c.lbl.style.opacity = op; c.lbl.style.pointerEvents = op === '1' ? 'auto' : 'none'; }
   if (tr !== null && tr !== c.tr) { c.tr = tr; c.lbl.style.transform = tr; }
@@ -797,7 +839,7 @@ function frame() {
   const placed = [];
   for (const c of cities) { const on = sel.has(c.id);
     const p = cityModel(c).multiplyScalar(1.007); c.mesh.position.copy(p); c.mesh.visible = on;
-    if (!on) { setLbl(c, '0', null); continue; }
+    if (!on) { setLbl(c, '0', null); setLead(c, false); c.sv = false; continue; }
     const w = m2w(p.toArray()), facing = w.clone().normalize().dot(camDir);
     tmpV.copy(w).project(camera);
     const x = (tmpV.x + 1) / 2 * innerWidth, y = (1 - tmpV.y) / 2 * innerHeight;
@@ -805,16 +847,20 @@ function frame() {
     setLbl(c, vis ? '1' : '0', null);
     const txt = fmtLat(Math.asin(Math.max(-1, Math.min(1, p.z / p.length()))) / D);
     if (txt !== c.txt) { c.txt = txt; c.small.textContent = txt; }
-    placed.push({ c, x: x + 9, y: y - 11, vis });
+    c.sx = x; c.sy = y; c.sv = vis;
+    placed.push({ c, px: x, py: y, x: x + 16, y: y - 32, vis });
   }
   // labels that would collide step down until they clear the ones above them
   placed.sort((a, b) => a.y - b.y);
   const taken = [];
   // a label's width only depends on its name and how many characters its latitude has, so measure each length once
   for (const l of placed) { const c = l.c, n = c.txt.length; const w = c.widths[n] ?? (c.widths[n] = c.lbl.offsetWidth || 90);
+    // a label that would run off the right edge sits to the left of its pin instead
+    l.flip = l.x + w > innerWidth - 8; if (l.flip) l.x = l.px - 16 - w;
     // the test uses 22 px while the step is 24 px, so floating-point rounding can never re-trigger the same pair; the pass cap is a second guard
     if (l.vis) { for (let pass = 0, moved = true; moved && pass < 24; pass++) { moved = false; for (const o of taken) if (l.y > o.y - 22 && l.y < o.y + 22 && l.x < o.x + o.w + 4 && o.x < l.x + w + 4) { l.y = o.y + 24; moved = true; } } taken.push({ x: l.x, y: l.y, w }); }
-    setLbl(c, null, `translate3d(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px, 0)`); }
+    setLbl(c, null, `translate3d(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px, 0)`);
+    setLead(c, l.vis, l.px, l.py, l.flip ? l.x + w : l.x, l.y + 11); }
   for (const pt of poleTags) {
     // hidden when the planet is between the camera and the tag
     const d = pt.tip.clone().sub(camera.position), b = camera.position.dot(d), a = d.lengthSq(), cc = camera.position.lengthSq() - 1, disc = b * b - a * cc;
