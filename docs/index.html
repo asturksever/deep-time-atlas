@@ -144,6 +144,9 @@ input[type="range"] { accent-color: var(--pin); width: 64px; }
 .ld.on .hit { pointer-events: stroke; }
 .ld .ln { stroke: rgba(238, 242, 251, 0.55); stroke-width: 1; transition: stroke var(--dur-small) ease, stroke-width var(--dur-small) ease; }
 .ld .an { fill: var(--pin); stroke: rgba(8, 12, 24, 0.85); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; transition: transform var(--dur-small) var(--ease-out); }
+.lbl.unborn { color: var(--ink-dim); }
+.ld.unborn .an { fill: rgba(8, 12, 24, 0.6); stroke: var(--pin); stroke-width: 1.3; }
+.ld.unborn .ln { stroke-dasharray: 2 3; }
 .ld.hot .ln, .ld.following .ln { stroke: var(--pin); stroke-width: 1.5; }
 .ld.hot .an, .ld.following .an { transform: scale(1.45); }
 .lbl small { font: 500 11px var(--mono); color: var(--ink-dim); }
@@ -256,6 +259,8 @@ button { touch-action: manipulation; }
     <p>Each piece of continental crust from an open plate model is draped with today's satellite imagery, then turned on the globe by its own plate's rotation for the age you pick. Between the pieces is ocean floor that has since been destroyed.</p>
     <h3>What the surface shows</h3>
     <p>The colours are today's surface carried back in time. Ice, deserts, forests and coastlines are modern, so an icy Antarctica sitting near the equator 500 million years ago is a reminder of that, not a claim about the past. Ancient shorelines, seas and mountains are not modelled.</p>
+    <h3>Cities before their ground existed</h3>
+    <p>Some cities stand on crust that the model only creates later, for example the mountain belt under Rio de Janeiro, which forms as Gondwana assembles about 520 million years ago. Before that age the city shows as a hollow ring labelled with the age its crust appears.</p>
     <h3>Poles</h3>
     <p>N and S mark Earth's spin axis. The model keeps the axis fixed and moves the plates across it, which is how palaeomagnetism records ancient latitude.</p>
     <h3>Uncertainty</h3>
@@ -276,6 +281,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // draw only when something on screen changed: the age, the camera, a city, the ruler or the window size
 let dirty = true, sigT = NaN; const sig = new Float64Array(7);
 const invalidate = () => { dirty = true; };
+let rings = null;   // present-day plate outlines, prepared on first use (plate lookup, city ages)
 
 const M = JSON.parse(document.getElementById('model').textContent);
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -591,7 +597,7 @@ const cities = [], sel = new Set();
 const esc = x => String(x).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 function addCity(d) {   // d: { id, n, sub, ll: [lon, lat], p, custom }
   if (cities.some(c => c.id === d.id)) return cities.find(c => c.id === d.id);
-  const c = { ...d, pi: pidIndex.get(d.p), v: toVec(d.ll[0], d.ll[1]), today: d.ll[1] };
+  const c = { ...d, pi: pidIndex.get(d.p), v: toVec(d.ll[0], d.ll[1]), today: d.ll[1], born: cityBorn(d.ll[0], d.ll[1], d.p) };
   c.mesh = new THREE.Mesh(pinGeo, pinMat); earth.add(c.mesh);
   c.lbl = document.createElement('div'); c.lbl.className = 'lbl'; c.lbl.innerHTML = `${esc(c.n)}<small></small>`;
   c.lbl.addEventListener('click', () => setFollow(c.id)); labels.appendChild(c.lbl);
@@ -637,13 +643,24 @@ for (const c of M.cities) addCity({ id: c.n, n: c.n, ll: c.ll, p: c.p, custom: f
 renderList();
 
 // which plate carries a present-day point: the smallest static polygon containing it, else the nearest coastline piece
-let rings = null;
-function plateFor(lon, lat) {
+function ensureRings() {
   if (!rings) rings = M.f.filter(f => f.e <= 0.5 && pidIndex.has(f.p)).map(f => { const pts = prepRing(f); let a = 0;
     for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; a += p[0] * q[1] - q[0] * p[1]; }
-    return { k: f.k, p: f.p, pts, area: Math.abs(a) / 2 }; });
+    return { k: f.k, p: f.p, b: f.b, pts, area: Math.abs(a) / 2 }; });
+  return rings;
+}
+function ringHas(r, lon, lat) { return inside(r.pts, lon, lat) || inside(r.pts, lon + 360, lat) || inside(r.pts, lon - 360, lat); }
+// the age at which the crust under a city first exists in the model; before that, the city has no ground to stand on
+function cityBorn(lon, lat, p) {
+  let born = -1; for (const r of ensureRings()) if (r.p === p && ringHas(r, lon, lat)) born = Math.max(born, r.b);
+  if (born < 0) { let bd = Infinity;   // coastal points just outside a simplified polygon: use the nearest piece of the same plate
+    for (const r of rings) if (r.p === p) for (const [x, y] of r.pts) { const d = Math.hypot(((x - lon + 540) % 360 - 180) * Math.cos(lat * D), y - lat); if (d < bd) { bd = d; born = r.b; } } }
+  return born < 0 || born >= 600 ? Infinity : born;
+}
+function plateFor(lon, lat) {
+  ensureRings();
   const hit = kind => { let best = null; for (const r of rings) { if (r.k !== kind || (best && r.area >= best.area)) continue;
-    if (inside(r.pts, lon, lat) || inside(r.pts, lon + 360, lat) || inside(r.pts, lon - 360, lat)) best = r; } return best; };
+    if (ringHas(r, lon, lat)) best = r; } return best; };
   const h = hit('c') || hit('l'); if (h) return h.p;
   let best = null, bd = 1.5;   // within about 150 km of a coastline piece
   for (const r of rings) for (const [x, y] of r.pts) { const dx = ((x - lon + 540) % 360 - 180) * Math.cos(lat * D), dd = Math.hypot(dx, y - lat); if (dd < bd) { bd = dd; best = r; } }
@@ -842,14 +859,15 @@ function frame() {
   const camDir = camera.position.clone().normalize();
   const placed = [];
   for (const c of cities) { const on = sel.has(c.id);
-    const p = cityModel(c).multiplyScalar(1.007); c.mesh.position.copy(p); c.mesh.visible = on;
+    const p = cityModel(c).multiplyScalar(1.007), unborn = tt > c.born + 1e-6; c.mesh.position.copy(p); c.mesh.visible = on && !unborn;
+    if (c.unborn !== unborn) { c.unborn = unborn; c.lbl.classList.toggle('unborn', unborn); c.g.classList.toggle('unborn', unborn); }
     if (!on) { setLbl(c, '0', null); setLead(c, false); c.sv = false; continue; }
     const w = m2w(p.toArray()), facing = w.clone().normalize().dot(camDir);
     tmpV.copy(w).project(camera);
     const x = (tmpV.x + 1) / 2 * innerWidth, y = (1 - tmpV.y) / 2 * innerHeight;
     const vis = facing > 0.18;
     setLbl(c, vis ? '1' : '0', null);
-    const txt = fmtLat(Math.asin(Math.max(-1, Math.min(1, p.z / p.length()))) / D);
+    const txt = unborn ? `from ${c.born} Ma` : fmtLat(Math.asin(Math.max(-1, Math.min(1, p.z / p.length()))) / D);
     if (txt !== c.txt) { c.txt = txt; c.small.textContent = txt; }
     c.sx = x; c.sy = y; c.sv = vis;
     placed.push({ c, px: x, py: y, x: x + 16, y: y - 32, vis });
@@ -874,7 +892,7 @@ function frame() {
     pt.el.style.opacity = hidden ? 0 : 1;
   }
   if (!pop.hidden) list.querySelectorAll('.city').forEach(row => { const c = cities[+row.dataset.i];
-    const p = cityModel(c); row.querySelector('[data-lat]').textContent = fmtLat(Math.asin(Math.max(-1, Math.min(1, p.z))) / D); });
+    const p = cityModel(c); row.querySelector('[data-lat]').textContent = tt > c.born + 1e-6 ? `from ${c.born} Ma` : fmtLat(Math.asin(Math.max(-1, Math.min(1, p.z))) / D); });
   if (!loaded) sizeVeil();
   renderer.render(scene, camera);
 }
