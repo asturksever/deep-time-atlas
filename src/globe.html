@@ -1,5 +1,10 @@
 <title>Deep Time Globe</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2312308c'/%3E%3Cpath d='M8 11c4-3 9-1 10 3s-3 7-6 10c-3-3-7-9-4-13z' fill='%237d8a5a'/%3E%3Cpath d='M19 18c3-1 6 1 6 4-2 2-5 3-7 2 0-2 0-4 1-6z' fill='%237d8a5a'/%3E%3Ccircle cx='23' cy='9' r='3' fill='%23ff6f61'/%3E%3C/svg%3E">
+<!-- start the big downloads in parallel while the page parses -->
+<link rel="preload" href="model.json" as="fetch" crossorigin="anonymous">
+<link rel="preload" href="earth-2k.jpg" as="image" crossorigin="anonymous">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" crossorigin="anonymous">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js" crossorigin="anonymous">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
@@ -62,12 +67,12 @@ button:active { transform: scale(0.96); }
 .tools svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .tools button[aria-pressed="true"] { color: var(--pin); }
 
-/* ---------- following pill ---------- */
-.follow { position: fixed; left: 50%; top: calc(var(--gutter) + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 14px; font-weight: 600; font-size: 13px;
-  transition: opacity var(--dur-small) var(--ease-out), transform var(--dur-small) var(--ease-out); }
-.follow[hidden] { display: flex !important; opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.97); pointer-events: none; }
-.follow button { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; }
-@media (max-width: 640px) { .follow { top: auto; bottom: calc(var(--dock-h, 100px) + var(--gutter) + 12px + env(safe-area-inset-bottom, 0px)); } }
+/* ---------- following: a row at the foot of the card ---------- */
+.follow-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-top: 7px; border-top: 1px solid var(--glass-edge); font: 600 12.5px var(--ui); color: var(--ink); }
+.follow-row .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pin); box-shadow: 0 0 0 3px rgba(255, 111, 97, 0.22); flex: none; }
+.follow-row span:not(.dot) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.follow-row button { width: 28px; height: 28px; padding: 0; margin: -4px -6px -4px 0; display: grid; place-items: center; color: var(--ink-dim); }
+@media (pointer: coarse) { .follow-row button { width: 40px; height: 40px; margin: -10px -10px -10px 0; } }
 
 /* ---------- time dock: one slim row, ruler in the middle ---------- */
 .dock { position: fixed; left: 50%; bottom: calc(var(--gutter) + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: min(1040px, calc(100vw - 2 * var(--gutter) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))); box-sizing: border-box; padding: 5px 6px; z-index: 3;
@@ -209,7 +214,7 @@ button { touch-action: manipulation; }
   #playLabel { display: none; }
   .speed output { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .pop, .follow, .lbl { transition-property: opacity; } dialog[open] .sheet { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .pop, .lbl { transition-property: opacity; } dialog[open] .sheet { animation: none; } }
 </style>
 
 <div id="stage" aria-label="3D globe of reconstructed continents. Drag to turn it, scroll or pinch to zoom."></div>
@@ -222,6 +227,7 @@ button { touch-action: manipulation; }
   </div>
   <div id="storyBody"><h2 id="storyTitle"></h2><p id="storyText"></p></div>
   <button class="more" id="more" type="button" aria-expanded="false">More</button>
+  <div class="follow-row" id="follow" hidden><span class="dot" aria-hidden="true"></span><span id="followName">Following London</span><button id="unfollow" type="button" aria-label="Stop following"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
 </section>
 
 <nav class="tools glass" aria-label="View">
@@ -230,7 +236,7 @@ button { touch-action: manipulation; }
   <button id="about" type="button" title="Sources and limits" aria-label="Sources and limits"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg></button>
 </nav>
 
-<div class="follow glass" id="follow" hidden><span id="followName">Following London</span><button id="unfollow" type="button" aria-label="Stop following"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+
 
 <section class="dock glass" aria-label="Time controls">
   <button id="play" type="button" aria-pressed="false"><svg viewBox="0 0 10 10" aria-hidden="true"><path id="playIcon" d="M1 0 L10 5 L1 10 Z"/></svg><span id="playLabel">Play</span></button>
@@ -269,7 +275,6 @@ button { touch-action: manipulation; }
 
 <div class="placeholder" id="loading" role="status"><div class="orb" aria-hidden="true"></div><span class="status" id="loadingText">Loading the planet</span></div>
 
-<script id="model" type="application/json">__MODEL__</script>
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
 <script type="module">
 import * as THREE from 'three';
@@ -279,7 +284,20 @@ let dirty = true, sigT = NaN; const sig = new Float64Array(7);
 const invalidate = () => { dirty = true; };
 let rings = null;   // present-day plate outlines, prepared on first use (plate lookup, city ages)
 
-const M = JSON.parse(document.getElementById('model').textContent);
+// the imagery starts loading straight away; the model arrives as compact JSON (see scripts/build.py)
+const texP = new Promise((res, rej) => new THREE.TextureLoader().load('earth-2k.jpg', res, undefined, rej));
+texP.catch(() => {});
+let M;
+try { M = decodeModel(await (await fetch('model.json')).json()); }
+catch (err) { document.getElementById('loading').classList.add('failed'); document.getElementById('loadingText').textContent = 'The plate model did not load. Reload the page to try again.'; throw err; }
+// v2: quaternion rows are stored as second differences along time, ring coordinates as differences between vertices
+function decodeModel(m) {
+  if (m.v !== 2) return m;
+  const undiff = (a, k) => { for (let i = k; i < a.length; i++) a[i] += a[i - k]; return a; };
+  m.q = m.q.map(r => undiff(undiff(r, 4), 4));
+  for (const f of m.f) undiff(f.r, 2);
+  return m;
+}
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const C = { ink: css('--ink'), dim: css('--ink-dim'), pin: css('--pin'), mono: css('--mono') };
@@ -714,7 +732,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !pop.hidde
 
 // ---------- camera: follow a city, recentre, slow spin ----------
 const followEl = document.getElementById('follow');
-function setFollow(id) { follow = id; followEl.hidden = !id; invalidate();
+function setFollow(id) { const was = !followEl.hidden; follow = id; followEl.hidden = !id; invalidate();
+  if (was !== !!id && innerWidth <= 640) resize();   // on phones the card height sets the free area
   for (const c of cities) { const f = c.id === id; c.lbl.classList.toggle('following', f); c.g.classList.toggle('following', f); } if (id) { const c = cities.find(x => x.id === id); document.getElementById('followName').textContent = `Following ${c ? c.n : ''}`; fly = null; } }
 document.getElementById('unfollow').addEventListener('click', () => setFollow(null));
 function lookAtModel(lon, lat) { return m2w(toVec(lon, lat)).normalize(); }
@@ -739,9 +758,10 @@ addEventListener('hashchange', () => { stop(); ageS.active = false; readHash(); 
 
 // ---------- build plates, load imagery ----------
 const groups = [];
+let plateMat = null;
 const loadingEl = document.getElementById('loading'), loadingText = document.getElementById('loadingText');
 async function build(tex) {
-  const plateMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.88, metalness: 0, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.22 });
+  plateMat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.88, metalness: 0, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.22 });
   const byKey = new Map();
   for (const f of M.f) { const pi = pidIndex.get(f.p); if (pi === undefined) continue;
     const key = `${f.k}|${pi}|${f.b}|${f.e}`; if (!byKey.has(key)) byKey.set(key, { kind: f.k, pi, b: f.b, e: f.e, feats: [] }); byKey.get(key).feats.push(f); }
@@ -899,13 +919,23 @@ addEventListener('resize', resize); resize();
 camera.position.set(0, 0.4, 6.5);
 updateText();
 renderer.setAnimationLoop(frame);
-new THREE.TextureLoader().load('earth-4k.jpg', async tex => {
-  tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+const prepTex = tex => { tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping; tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); return tex; };
+// sharper imagery only where it shows: a planet more than about 1000 device pixels across, on a connection that is not slow or metered
+// the speed comes from how fast the 2K image actually arrived, not from the browser's rough connection estimate
+function wantSharp() { const c = navigator.connection;
+  if (c && (c.saveData || /(^|-)(2g|3g)$/.test(c.effectiveType || ''))) return false;
+  const e = performance.getEntriesByName(new URL('earth-2k.jpg', location.href).href)[0];
+  if (e && e.encodedBodySize > 0 && e.responseEnd > e.requestStart) { const mbps = e.encodedBodySize * 8 / 1000 / (e.responseEnd - e.requestStart); if (mbps < 3) return false; }
+  return Math.min(innerWidth, free.bottom - free.top) * renderer.getPixelRatio() > 1000; }
+texP.then(async tex => {
+  prepTex(tex);
   oceanFromImagery(tex.image);
   await build(tex); lastT = -1; invalidate();
   frame();   // place plates for the current age before choosing where to look
   const dir = homeDir(); camera.position.copy(dir.clone().multiplyScalar(fitDist() + 2.5));
   fly = { dir, dist: fitDist() };
   loadingEl.classList.add('done'); setTimeout(() => { loaded = true; }, 450);
-}, undefined, () => { loadingEl.classList.add('failed'); loadingText.textContent = 'The imagery did not load. Reload the page to try again.'; });
+  if (wantSharp()) new THREE.TextureLoader().load('earth-4k.jpg', hi => {
+    const old = plateMat.map; plateMat.map = plateMat.emissiveMap = prepTex(hi); plateMat.needsUpdate = true; old.dispose(); invalidate(); });
+}, () => { loadingEl.classList.add('failed'); loadingText.textContent = 'The imagery did not load. Reload the page to try again.'; });
 </script>
